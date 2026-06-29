@@ -1,4 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_SERVICE_KEY
+);
 
 const C = {
   bg:"#FFFFFF",bgSoft:"#F7F7F7",red:"#CC0000",redLight:"#FF1A1A",
@@ -6,13 +12,8 @@ const C = {
   gray:"#888888",grayLight:"#DDDDDD",green:"#1A7A4A",amber:"#B85C00",blue:"#1A4A8A",
 };
 
-const CONTACTS = [
-  {id:1,first_name:"Arjun",last_name:"Mehta",initials:"AM",role:"CEO",company:"Nexus Capital",sector:"Finance",location_city:"Grand Baie",last_interaction:"Il y a 8j",known_personally:true,emotional_state:"expansion",primary_lever:"statut",current_desire:"Lever un fonds Afrique",red_lines:"Ne jamais le contredire en public",discussion_points:["Fonds Afrique subsaharienne","Golf au Gymkhana","Immobilier Grand Baie"],topics_to_avoid:["Son divorce 2021","Investissements crypto"],hobbies:["Golf","Voile","Gastronomie"],utility_score:9,sentiment_score:7,reliability_score:8,influence_score:9,reciprocity_score:4,momentum_score:6,potential_score:10,relational_debt:-2,connections:[2,4,5],related:[{id:10,name:"Sati Mehta",role:"Épouse",initials:"SM",type:"famille",known:false},{id:11,name:"Robert Marie",role:"Associé Import/Export",initials:"RM",type:"business",known:false},{id:4,name:"Jean Pierre Lim",role:"Président AMM",initials:"JL",type:"réseau",known:true}],interactions:[{date:"19 Juin 2025",type:"Déjeuner",summary:"Évoqué le fonds Afrique. Cherche co-investisseurs.",follow_up:"Envoyer note AfCFTA"},{date:"3 Mai 2025",type:"Événement",summary:"Croisé au gala MiM. Bonne énergie.",follow_up:null}],reminders:[{message:"Envoyer note AfCFTA promise",due:"Dans 2 jours",urgent:true}],tags:["investisseur","réseau MiM"],notes:"A financé 3 startups locales. Approche toujours par la valeur."},
-  {id:2,first_name:"Sophie",last_name:"Delacroix",initials:"SD",role:"Directrice Générale",company:"Île Bleue Tours",sector:"Tourisme",location_city:"Tamarin",last_interaction:"Il y a 3j",known_personally:true,emotional_state:"stable",primary_lever:"appartenance",current_desire:"Partenaires agritourisme",red_lines:"Ne pas minimiser le secteur touristique",discussion_points:["Agritourisme","Hôtellerie 5 étoiles","Cuisine créole"],topics_to_avoid:["Concurrents directs"],hobbies:["Yoga","Cuisine créole"],utility_score:8,sentiment_score:8,reliability_score:7,influence_score:7,reciprocity_score:7,momentum_score:8,potential_score:8,relational_debt:1,connections:[1,3,5],related:[],interactions:[{date:"25 Juin 2025",type:"Appel",summary:"Intéressée par un partenariat TripIn.",follow_up:"Préparer deck"}],reminders:[],tags:["tourisme","influence"],notes:"Très bien connectée avec les hôteliers 5 étoiles."},
-  {id:3,first_name:"Kevin",last_name:"Ah Kow",initials:"KA",role:"CTO",company:"BlueWave Tech",sector:"Tech",location_city:"Flic en Flac",last_interaction:"Il y a 13j",known_personally:true,emotional_state:"transition",primary_lever:"intérêt",current_desire:"Nouveau projet tech ambitieux",red_lines:"Ne pas proposer des missions sous-payées",discussion_points:["Tech entrepreneuriat","Kitesurf","Gaming"],topics_to_avoid:["Son ex-employeur"],hobbies:["Gaming","Kitesurf"],utility_score:8,sentiment_score:8,reliability_score:9,influence_score:7,reciprocity_score:6,momentum_score:5,potential_score:9,relational_debt:0,connections:[2,5],related:[],interactions:[{date:"15 Juin 2025",type:"Café",summary:"Ouvert à rejoindre un projet comme tech lead.",follow_up:"Recontacter pour Anansi"}],reminders:[{message:"Explorer collaboration sur Anansi",due:"Cette semaine",urgent:false}],tags:["tech","startup"],notes:"Développeur full-stack senior. Peut potentiellement rejoindre comme tech lead."},
-  {id:4,first_name:"Jean Pierre",last_name:"Lim",initials:"JL",role:"Président",company:"AMM",sector:"Associatif",location_city:"Port Louis",last_interaction:"Il y a 21j",known_personally:true,emotional_state:"stable",primary_lever:"réciprocité",current_desire:"Développer l'AMM régionalement",red_lines:"Ne jamais parler politique partisane",discussion_points:["Développement économique Maurice","Golf","Réseaux d'affaires"],topics_to_avoid:["Politique partisane"],hobbies:["Golf","Lecture"],utility_score:7,sentiment_score:9,reliability_score:9,influence_score:8,reciprocity_score:8,momentum_score:4,potential_score:8,relational_debt:2,connections:[1,5],related:[],interactions:[{date:"7 Juin 2025",type:"Déjeuner",summary:"Très positif sur la vision MiM et AfCFTA.",follow_up:null}],reminders:[{message:"Momentum faible — recontacter",due:"Ce mois",urgent:false}],tags:["réseau","AMM"],notes:"Joue au golf avec Arjun. Référence dans le réseau local."},
-  {id:5,first_name:"Marc",last_name:"Fontaine",initials:"MF",role:"Président",company:"Made in Moris",sector:"Associatif",location_city:"Ebène",last_interaction:"Il y a 6j",known_personally:true,emotional_state:"expansion",primary_lever:"statut",current_desire:"Élargir le label MiM régionalement",red_lines:"Ne jamais remettre en question le label MiM",discussion_points:["Expansion régionale MiM","Rugby","Gastronomie locale"],topics_to_avoid:["Politique gouvernementale"],hobbies:["Rugby","Gastronomie"],utility_score:10,sentiment_score:9,reliability_score:10,influence_score:10,reciprocity_score:8,momentum_score:9,potential_score:10,relational_debt:0,connections:[1,2,3,4],related:[],interactions:[{date:"22 Juin 2025",type:"Réunion",summary:"Alignés sur stratégie Q3. Très forte synergie.",follow_up:null}],reminders:[],tags:["MiM","réseau local","clé"],notes:"Pilier du réseau MiM. Connaît tous les acteurs économiques locaux."},
-];
+// Contacts are loaded from Supabase — this is just a fallback for dev
+const CONTACTS = [];
 
 const MOCK_NOTIFICATIONS = [
   {id:1,type:"urgent",message:"Envoyer la note AfCFTA à Arjun Mehta",contactId:1,due:"Dans 2 jours",read:false,time:"Il y a 1h"},
@@ -329,6 +330,9 @@ function ContactNetwork({contact,contacts,onSelect,height=280}){
 }
 
 // ── GLOBAL NETWORK ────────────────────────────────────────────────────────────
+// Seeded pseudo-random for stable positions across sessions
+function seededRand(seed){let s=seed%2147483647;if(s<=0)s+=2147483646;s=s*16807%2147483647;return(s-1)/2147483646;}
+
 function NetworkGraph({contacts,onSelect}){
   const canvasRef=useRef(null);
   const nodesRef=useRef([]);
@@ -339,23 +343,73 @@ function NetworkGraph({contacts,onSelect}){
     const W=canvas.offsetWidth,H=canvas.offsetHeight;
     canvas.width=W;canvas.height=H;
     const cx=W/2,cy=H/2,r=Math.min(W,H)*0.32;
-    nodesRef.current=contacts.map((c,i)=>{const a=(i/contacts.length)*Math.PI*2-Math.PI/2;return{id:c.id,contact:c,x:cx+r*Math.cos(a)+(Math.random()-0.5)*30,y:cy+r*Math.sin(a)+(Math.random()-0.5)*30,vx:0,vy:0,r:c.utility_score>=9?26:c.utility_score>=7?21:17};});
+
+    // Deterministic positions: angle from index, jitter from seeded random based on contact id
+    nodesRef.current=contacts.map((c,i)=>{
+      const a=(i/Math.max(contacts.length,1))*Math.PI*2-Math.PI/2;
+      const seed=typeof c.id==="number"?c.id:c.id?.charCodeAt?.(0)||i+1;
+      const jx=(seededRand(seed*3)-0.5)*28;
+      const jy=(seededRand(seed*7+1)-0.5)*28;
+      return{
+        id:c.id,contact:c,
+        x:cx+r*Math.cos(a)+jx,
+        y:cy+r*Math.sin(a)+jy,
+        vx:0,vy:0,
+        r:c.utility_score>=9?26:c.utility_score>=7?21:17
+      };
+    });
+
     const getN=(id)=>nodesRef.current.find(n=>n.id===id);
     let frame=0;
     const loop=()=>{
       const ctx=canvas.getContext("2d");ctx.clearRect(0,0,W,H);
-      if(frame<120){
+      // Run physics only for first 80 frames to settle, then freeze
+      if(frame<80){
         const nodes=nodesRef.current;
-        for(let i=0;i<nodes.length;i++){for(let j=i+1;j<nodes.length;j++){const dx=nodes[j].x-nodes[i].x,dy=nodes[j].y-nodes[i].y,d=Math.sqrt(dx*dx+dy*dy)||1,f=2500/(d*d);nodes[i].vx-=f*dx/d;nodes[i].vy-=f*dy/d;nodes[j].vx+=f*dx/d;nodes[j].vy+=f*dy/d;}nodes[i].vx+=(cx-nodes[i].x)*0.004;nodes[i].vy+=(cy-nodes[i].y)*0.004;}
-        contacts.forEach(c=>c.connections.forEach(cid=>{const a=getN(c.id),b=getN(cid);if(!a||!b)return;const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1,f=(d-120)*0.02;a.vx+=f*dx/d;a.vy+=f*dy/d;b.vx-=f*dx/d;b.vy-=f*dy/d;}));
-        nodes.forEach(n=>{n.vx*=0.85;n.vy*=0.85;n.x+=n.vx;n.y+=n.vy;n.x=Math.max(n.r+8,Math.min(W-n.r-8,n.x));n.y=Math.max(n.r+8,Math.min(H-n.r-8,n.y));});
+        for(let i=0;i<nodes.length;i++){
+          for(let j=i+1;j<nodes.length;j++){
+            const dx=nodes[j].x-nodes[i].x,dy=nodes[j].y-nodes[i].y;
+            const d=Math.sqrt(dx*dx+dy*dy)||1,f=2500/(d*d);
+            nodes[i].vx-=f*dx/d;nodes[i].vy-=f*dy/d;
+            nodes[j].vx+=f*dx/d;nodes[j].vy+=f*dy/d;
+          }
+          nodes[i].vx+=(cx-nodes[i].x)*0.004;
+          nodes[i].vy+=(cy-nodes[i].y)*0.004;
+        }
+        contacts.forEach(c=>c.connections.forEach(cid=>{
+          const a=getN(c.id),b=getN(cid);if(!a||!b)return;
+          const dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1,f=(d-120)*0.02;
+          a.vx+=f*dx/d;a.vy+=f*dy/d;b.vx-=f*dx/d;b.vy-=f*dy/d;
+        }));
+        nodes.forEach(n=>{
+          n.vx*=0.85;n.vy*=0.85;
+          n.x+=n.vx;n.y+=n.vy;
+          n.x=Math.max(n.r+8,Math.min(W-n.r-8,n.x));
+          n.y=Math.max(n.r+8,Math.min(H-n.r-8,n.y));
+        });
+        // After physics settles, snap positions so they don't drift on re-render
+        if(frame===79) nodes.forEach(n=>{n.vx=0;n.vy=0;});
         frame++;
       }
-      contacts.forEach(c=>{const a=getN(c.id);if(!a)return;c.connections.forEach(cid=>{const b=getN(cid);if(!b||cid<c.id)return;const hi=c.id===hovRef.current||cid===hovRef.current;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.strokeStyle=hi?"rgba(204,0,0,0.3)":"rgba(0,0,0,0.07)";ctx.lineWidth=hi?1.5:1;ctx.stroke();});});
-      nodesRef.current.forEach(n=>{const hov=n.id===hovRef.current,score=healthScore(n.contact),hcol=healthColor(score);
+      contacts.forEach(c=>{
+        const a=getN(c.id);if(!a)return;
+        c.connections.forEach(cid=>{
+          const b=getN(cid);if(!b||cid<c.id)return;
+          const hi=c.id===hovRef.current||cid===hovRef.current;
+          ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+          ctx.strokeStyle=hi?"rgba(204,0,0,0.3)":"rgba(0,0,0,0.07)";
+          ctx.lineWidth=hi?1.5:1;ctx.stroke();
+        });
+      });
+      nodesRef.current.forEach(n=>{
+        const hov=n.id===hovRef.current,score=healthScore(n.contact),hcol=healthColor(score);
         if(hov){ctx.beginPath();ctx.arc(n.x,n.y,n.r+8,0,Math.PI*2);ctx.fillStyle="rgba(204,0,0,0.07)";ctx.fill();}
-        ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,Math.PI*2);ctx.fillStyle="#fff";ctx.fill();ctx.strokeStyle=hov?C.red:"rgba(0,0,0,0.1)";ctx.lineWidth=hov?1.5:1;ctx.stroke();
-        ctx.fillStyle=C.black;ctx.font=`bold ${n.r*0.55}px Inter,sans-serif`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(n.contact.initials,n.x,n.y);
+        ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
+        ctx.fillStyle="#fff";ctx.fill();
+        ctx.strokeStyle=hov?C.red:"rgba(0,0,0,0.1)";ctx.lineWidth=hov?1.5:1;ctx.stroke();
+        ctx.fillStyle=C.black;ctx.font=`bold ${n.r*0.55}px Inter,sans-serif`;
+        ctx.textAlign="center";ctx.textBaseline="middle";
+        ctx.fillText(n.contact.initials,n.x,n.y);
         ctx.beginPath();ctx.arc(n.x+n.r*0.65,n.y-n.r*0.65,4,0,Math.PI*2);ctx.fillStyle=hcol;ctx.fill();
         if(hov){ctx.fillStyle=C.black;ctx.font=`500 10px Inter,sans-serif`;ctx.fillText(n.contact.first_name,n.x,n.y+n.r+13);}
       });
@@ -784,23 +838,145 @@ function Login({onUnlock}){
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────────────────────────
-function Dashboard({contacts:baseContacts,onSelect,selected,onDeselect}){
+function Dashboard({contacts:baseContacts,onSelect,selected,onDeselect,onSaveContact,onRefresh}){
   const [view,setView]=useState("graph");
   const [search,setSearch]=useState("");
   const [notifications,setNotifications]=useState(MOCK_NOTIFICATIONS);
   const [showNotifs,setShowNotifs]=useState(false);
   const [showImport,setShowImport]=useState(false);
   const [showAddContact,setShowAddContact]=useState(false);
-  const [extraContacts,setExtraContacts]=useState([]);
+  const [filters,setFilters]=useState({sector:[],emotional_state:[],primary_lever:[],ego_type:[],known_personally:null});
   const windowWidth=useWindowWidth();
   const isMobile=windowWidth<768;
 
-  const contacts=[...baseContacts,...extraContacts];
-  const filtered=contacts.filter(c=>`${c.first_name} ${c.last_name} ${c.company} ${c.sector}`.toLowerCase().includes(search.toLowerCase()));
+  const contacts=baseContacts;
+
+  // Build filter options from actual contacts
+  const opts={
+    sector:[...new Set(contacts.map(c=>c.sector).filter(Boolean))],
+    emotional_state:[...new Set(contacts.map(c=>c.emotional_state).filter(Boolean))],
+    primary_lever:[...new Set(contacts.map(c=>c.primary_lever).filter(Boolean))],
+    ego_type:[...new Set(contacts.map(c=>c.ego_type).filter(Boolean))],
+  };
+
+  const toggleFilter=(cat,val)=>setFilters(f=>{
+    const cur=f[cat];
+    return{...f,[cat]:cur.includes(val)?cur.filter(x=>x!==val):[...cur,val]};
+  });
+  const activeFilterCount=filters.sector.length+filters.emotional_state.length+filters.primary_lever.length+filters.ego_type.length+(filters.known_personally!==null?1:0);
+  const clearFilters=()=>setFilters({sector:[],emotional_state:[],primary_lever:[],ego_type:[],known_personally:null});
+
+  const filtered=contacts.filter(c=>{
+    const textMatch=`${c.first_name} ${c.last_name} ${c.company} ${c.sector}`.toLowerCase().includes(search.toLowerCase());
+    const sectorMatch=filters.sector.length===0||filters.sector.includes(c.sector);
+    const stateMatch=filters.emotional_state.length===0||filters.emotional_state.includes(c.emotional_state);
+    const leverMatch=filters.primary_lever.length===0||filters.primary_lever.includes(c.primary_lever);
+    const egoMatch=filters.ego_type.length===0||filters.ego_type.includes(c.ego_type);
+    const knownMatch=filters.known_personally===null||c.known_personally===filters.known_personally;
+    return textMatch&&sectorMatch&&stateMatch&&leverMatch&&egoMatch&&knownMatch;
+  });
+
   const unread=notifications.filter(n=>!n.read).length;
   const markRead=(id)=>setNotifications(prev=>prev.map(n=>n.id===id?{...n,read:true}:n));
   const handleNotifContact=(cid)=>{const c=contacts.find(x=>x.id===cid);if(c){onSelect(c);setShowNotifs(false);}};
-  const handleSaveContact=(c)=>{setExtraContacts(prev=>[c,...prev]);onSelect(c);};;
+  const handleSaveContact=(c)=>onSaveContact(c);
+
+  // STATE & LEVER label maps
+  const stateLabel={expansion:"En expansion",stable:"Stable",stress:"Sous stress",transition:"En transition"};
+  const leverLabel={statut:"Statut",réciprocité:"Réciprocité",appartenance:"Appartenance",intérêt:"Intérêt",cohérence:"Cohérence"};
+  const stateColor={expansion:C.green,stable:C.blue,stress:C.red,transition:C.amber};
+  const leverColor={statut:C.amber,réciprocité:C.blue,appartenance:"#6A0DAD",intérêt:C.green,cohérence:C.black};
+
+  // Filter sidebar component (inline)
+  const FilterSidebar=()=>(
+    <div style={{width:isMobile?"100%":180,flexShrink:0,borderRight:isMobile?"none":`1px solid ${C.grayLight}`,background:"#FAFAFA",overflowY:"auto",padding:"12px 10px",display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontSize:10,fontWeight:700,color:C.black,textTransform:"uppercase",letterSpacing:"0.08em"}}>Filtres {activeFilterCount>0&&<span style={{background:C.red,color:"#fff",borderRadius:10,padding:"1px 6px",fontSize:9,marginLeft:4}}>{activeFilterCount}</span>}</span>
+        {activeFilterCount>0&&<button onClick={clearFilters} style={{fontSize:10,color:C.red,background:"none",border:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>Effacer</button>}
+      </div>
+
+      {/* Known personally */}
+      <div>
+        <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Relation</div>
+        {[{label:"Connu personnellement",val:true},{label:"Contact indirect",val:false}].map(({label,val})=>(
+          <button key={String(val)} onClick={()=>setFilters(f=>({...f,known_personally:f.known_personally===val?null:val}))} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:filters.known_personally===val?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+            <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${filters.known_personally===val?C.red:C.grayLight}`,background:filters.known_personally===val?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {filters.known_personally===val&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
+            </div>
+            <span style={{fontSize:11,color:filters.known_personally===val?C.red:C.black}}>{label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Sector */}
+      {opts.sector.length>0&&(
+        <div>
+          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Secteur</div>
+          {opts.sector.map(v=>{const active=filters.sector.includes(v);return(
+            <button key={v} onClick={()=>toggleFilter("sector",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+              <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${active?C.red:C.grayLight}`,background:active?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {active&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
+              </div>
+              <span style={{fontSize:11,color:active?C.red:C.black}}>{v}</span>
+              <span style={{fontSize:9,color:C.gray,marginLeft:"auto"}}>{contacts.filter(c=>c.sector===v).length}</span>
+            </button>
+          );})}
+        </div>
+      )}
+
+      {/* Emotional state */}
+      {opts.emotional_state.length>0&&(
+        <div>
+          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>État</div>
+          {opts.emotional_state.map(v=>{const active=filters.emotional_state.includes(v);const col=stateColor[v]||C.gray;return(
+            <button key={v} onClick={()=>toggleFilter("emotional_state",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${col}15`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:col,flexShrink:0}}/>
+              <span style={{fontSize:11,color:active?col:C.black}}>{stateLabel[v]||v}</span>
+              <span style={{fontSize:9,color:C.gray,marginLeft:"auto"}}>{contacts.filter(c=>c.emotional_state===v).length}</span>
+            </button>
+          );})}
+        </div>
+      )}
+
+      {/* Primary lever */}
+      {opts.primary_lever.length>0&&(
+        <div>
+          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Levier</div>
+          {opts.primary_lever.map(v=>{const active=filters.primary_lever.includes(v);const col=leverColor[v]||C.gray;return(
+            <button key={v} onClick={()=>toggleFilter("primary_lever",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${col}15`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+              <span style={{fontSize:12,flexShrink:0}}>{LEVER_CONFIG[v]?.icon||"·"}</span>
+              <span style={{fontSize:11,color:active?col:C.black}}>{leverLabel[v]||v}</span>
+              <span style={{fontSize:9,color:C.gray,marginLeft:"auto"}}>{contacts.filter(c=>c.primary_lever===v).length}</span>
+            </button>
+          );})}
+        </div>
+      )}
+
+      {/* Ego type */}
+      {opts.ego_type.length>0&&(
+        <div>
+          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Ego</div>
+          {opts.ego_type.map(v=>{const active=filters.ego_type.includes(v);return(
+            <button key={v} onClick={()=>toggleFilter("ego_type",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+              <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${active?C.red:C.grayLight}`,background:active?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {active&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
+              </div>
+              <span style={{fontSize:11,color:active?C.red:C.black}}>{v}</span>
+              <span style={{fontSize:9,color:C.gray,marginLeft:"auto"}}>{contacts.filter(c=>c.ego_type===v).length}</span>
+            </button>
+          );})}
+        </div>
+      )}
+
+      {/* Active filter summary */}
+      {activeFilterCount>0&&(
+        <div style={{background:C.redSoft,borderRadius:8,padding:"8px 10px",border:`1px solid ${C.redMid}`}}>
+          <div style={{fontSize:10,color:C.red,fontWeight:600,marginBottom:3}}>{filtered.length} contact{filtered.length!==1?"s":""} correspondant{filtered.length!==1?"s":""}</div>
+          <div style={{fontSize:9,color:C.red}}>{contacts.length} au total</div>
+        </div>
+      )}
+    </div>
+  );
 
   // Shared topbar
   const Topbar=()=>(
@@ -844,33 +1020,52 @@ function Dashboard({contacts:baseContacts,onSelect,selected,onDeselect}){
 
       <div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",flexDirection:"column"}}>
         {!selected?(
-          // ── NO CARD: full view ──
-          <div style={{flex:1,position:"relative",overflow:"hidden"}}>
-            {view==="graph"?(
-              <>
-                <NetworkGraph contacts={filtered} onSelect={onSelect}/>
-                <div style={{position:"absolute",top:10,right:10,display:"flex",gap:8,pointerEvents:"none"}}>
-                  {[{l:"Contacts",v:contacts.length},{l:"Relations",v:contacts.reduce((s,c)=>s+c.connections.length,0)}].map(s=>(
-                    <div key={s.l} style={{background:"rgba(255,255,255,0.92)",backdropFilter:"blur(8px)",border:`1px solid ${C.grayLight}`,borderRadius:10,padding:"5px 10px",textAlign:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.07)"}}>
-                      <div style={{fontSize:15,fontWeight:800,color:C.black}}>{s.v}</div>
-                      <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.06em"}}>{s.l}</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{position:"absolute",bottom:14,left:"50%",transform:"translateX(-50%)",fontSize:11,color:C.gray,pointerEvents:"none",whiteSpace:"nowrap"}}>Cliquez sur un nœud pour voir la fiche</div>
-              </>
-            ):(
-              <div style={{padding:12,overflowY:"auto",height:"100%"}}>
-                {filtered.map(c=>{const score=healthScore(c),hcol=healthColor(score);return(
-                  <div key={c.id} onClick={()=>onSelect(c)} style={{display:"flex",alignItems:"center",gap:12,background:C.bg,border:`1px solid ${C.grayLight}`,borderRadius:10,padding:"11px 14px",cursor:"pointer",marginBottom:6}}
-                    onMouseEnter={e=>e.currentTarget.style.background="#F7F7F7"} onMouseLeave={e=>e.currentTarget.style.background=C.bg}>
-                    <div style={{width:38,height:38,borderRadius:"50%",background:"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.black,flexShrink:0}}>{c.initials}</div>
-                    <div style={{flex:1}}><div style={{fontSize:13,fontWeight:700,color:C.black}}>{c.first_name} {c.last_name}</div><div style={{fontSize:11,color:C.gray}}>{c.role} · {c.company}</div></div>
-                    <div style={{display:"flex",gap:5,alignItems:"center"}}><div style={{width:6,height:6,borderRadius:"50%",background:hcol}}/><span style={{fontSize:11,fontWeight:700,color:hcol}}>{score}</span></div>
+          // ── NO CARD: sidebar + main view ──
+          <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+            {/* Filter sidebar — hidden on mobile when no contacts, always on desktop */}
+            {(!isMobile||contacts.length>0)&&<FilterSidebar/>}
+            {/* Main area */}
+            <div style={{flex:1,position:"relative",overflow:"hidden"}}>
+              {view==="graph"?(
+                <>
+                  <NetworkGraph contacts={filtered} onSelect={onSelect}/>
+                  <div style={{position:"absolute",top:10,right:10,display:"flex",gap:8,pointerEvents:"none"}}>
+                    {[{l:"Affichés",v:filtered.length},{l:"Total",v:contacts.length}].map(s=>(
+                      <div key={s.l} style={{background:"rgba(255,255,255,0.92)",backdropFilter:"blur(8px)",border:`1px solid ${C.grayLight}`,borderRadius:10,padding:"5px 10px",textAlign:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.07)"}}>
+                        <div style={{fontSize:15,fontWeight:800,color:C.black}}>{s.v}</div>
+                        <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.06em"}}>{s.l}</div>
+                      </div>
+                    ))}
                   </div>
-                );})}
-              </div>
-            )}
+                  {filtered.length===0&&contacts.length>0&&(
+                    <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",textAlign:"center"}}>
+                      <div style={{fontSize:13,color:C.gray,marginBottom:8}}>Aucun contact ne correspond aux filtres</div>
+                      <button onClick={clearFilters} style={{fontSize:12,color:C.red,background:C.redSoft,border:`1px solid ${C.redMid}`,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontFamily:"Inter,sans-serif"}}>Effacer les filtres</button>
+                    </div>
+                  )}
+                  {contacts.length===0&&(
+                    <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",textAlign:"center"}}>
+                      <div style={{fontSize:24,marginBottom:8}}>◎</div>
+                      <div style={{fontSize:13,color:C.gray,marginBottom:12}}>Aucun contact pour l'instant</div>
+                      <div style={{fontSize:11,color:C.gray}}>Appuyez sur + pour ajouter votre premier contact</div>
+                    </div>
+                  )}
+                  <div style={{position:"absolute",bottom:14,left:"50%",transform:"translateX(-50%)",fontSize:11,color:C.gray,pointerEvents:"none",whiteSpace:"nowrap"}}>Cliquez sur un nœud pour voir la fiche</div>
+                </>
+              ):(
+                <div style={{padding:12,overflowY:"auto",height:"100%"}}>
+                  {filtered.map(c=>{const score=healthScore(c),hcol=healthColor(score);return(
+                    <div key={c.id} onClick={()=>onSelect(c)} style={{display:"flex",alignItems:"center",gap:12,background:C.bg,border:`1px solid ${C.grayLight}`,borderRadius:10,padding:"11px 14px",cursor:"pointer",marginBottom:6}}
+                      onMouseEnter={e=>e.currentTarget.style.background="#F7F7F7"} onMouseLeave={e=>e.currentTarget.style.background=C.bg}>
+                      <div style={{width:38,height:38,borderRadius:"50%",background:"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.black,flexShrink:0}}>{c.initials}</div>
+                      <div style={{flex:1}}><div style={{fontSize:13,fontWeight:700,color:C.black}}>{c.first_name} {c.last_name}</div><div style={{fontSize:11,color:C.gray}}>{c.role} · {c.company}</div></div>
+                      <div style={{display:"flex",gap:5,alignItems:"center"}}><div style={{width:6,height:6,borderRadius:"50%",background:hcol}}/><span style={{fontSize:11,fontWeight:700,color:hcol}}>{score}</span></div>
+                    </div>
+                  );})}
+                  {filtered.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:C.gray,fontSize:13}}>Aucun contact correspondant</div>}
+                </div>
+              )}
+            </div>
           </div>
         ) : isMobile ? (
           // ── MOBILE: vertical stack — network on top, card below ──
@@ -906,7 +1101,7 @@ function Dashboard({contacts:baseContacts,onSelect,selected,onDeselect}){
         )}
       </div>
 
-      {showImport&&<ImportTerminal onClose={()=>setShowImport(false)} onImport={(imported)=>console.log("Imported",imported.length)}/>}
+      {showImport&&<ImportTerminal onClose={()=>{setShowImport(false);onRefresh();}} onImport={(imported)=>console.log("Imported",imported.length)}/>}
       {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={handleSaveContact}/>}
       {/* Hex FAB — only visible when no modal is open */}
       {!showAddContact&&!showImport&&<HexFAB onClick={()=>setShowAddContact(true)}/>}
@@ -914,9 +1109,137 @@ function Dashboard({contacts:baseContacts,onSelect,selected,onDeselect}){
   );
 }
 
+// ── SUPABASE HELPERS ──────────────────────────────────────────────────────────
+function normalizeContact(row) {
+  return {
+    ...row,
+    initials: row.initials || ((row.first_name?.[0]||"")+(row.last_name?.[0]||"")),
+    hobbies: row.hobbies || [],
+    discussion_points: row.discussion_points || [],
+    topics_to_avoid: row.topics_to_avoid || [],
+    connections: row.connections || [],
+    related: row.related || [],
+    interactions: row.interactions || [],
+    reminders: row.reminders || [],
+    tags: row.tags || [],
+    last_interaction: row.last_interaction || "–",
+    utility_score: row.utility_score ?? 5,
+    sentiment_score: row.sentiment_score ?? 5,
+    reliability_score: row.reliability_score ?? 5,
+    influence_score: row.influence_score ?? 5,
+    reciprocity_score: row.reciprocity_score ?? 5,
+    momentum_score: row.momentum_score ?? 5,
+    potential_score: row.potential_score ?? 5,
+    relational_debt: row.relational_debt ?? 0,
+    known_personally: row.known_personally ?? false,
+  };
+}
+
+// ── ROOT ───────────────────────────────────────────────────────────────────────
 export default function App(){
-  const [unlocked,setUnlocked]=useState(false);
-  const [selected,setSelected]=useState(null);
-  if(!unlocked)return <Login onUnlock={()=>setUnlocked(true)}/>;
-  return <Dashboard contacts={CONTACTS} onSelect={c=>setSelected(c)} selected={selected} onDeselect={()=>setSelected(null)}/>;
+  const [unlocked, setUnlocked] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState(null);
+
+  // Load contacts from Supabase on unlock
+  useEffect(() => {
+    if (!unlocked) return;
+    loadContacts();
+  }, [unlocked]);
+
+  async function loadContacts() {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("contacts")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setContacts((data || []).map(normalizeContact));
+      setDbError(null);
+    } catch (e) {
+      console.error("Supabase load error:", e);
+      setDbError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveContact(contact) {
+    // Remove local-only fields before inserting
+    const { connections, related, interactions, reminders, ...rest } = contact;
+    const toInsert = {
+      ...rest,
+      connections: connections || [],
+      related: related || [],
+      interactions: interactions || [],
+      reminders: reminders || [],
+      last_interaction: new Date().toISOString().split("T")[0],
+    };
+    try {
+      const { data, error } = await supabase
+        .from("contacts")
+        .insert([toInsert])
+        .select()
+        .single();
+      if (error) throw error;
+      const saved = normalizeContact(data);
+      setContacts(prev => [saved, ...prev]);
+      setSelected(saved);
+    } catch (e) {
+      console.error("Supabase save error:", e);
+      // Still add locally so UX doesn't break
+      setContacts(prev => [contact, ...prev]);
+      setSelected(contact);
+    }
+  }
+
+  if (!unlocked) return <Login onUnlock={() => setUnlocked(true)} />;
+
+  if (loading) return (
+    <div style={{
+      minHeight:"100vh", background:C.bg,
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center", gap:16,
+      fontFamily:"Inter,sans-serif",
+    }}>
+      <Logo size={52}/>
+      <div style={{fontSize:13, color:C.gray}}>Chargement des contacts...</div>
+      <div style={{width:180, height:2, background:C.grayLight, borderRadius:2, overflow:"hidden"}}>
+        <div style={{height:"100%", background:C.red, borderRadius:2, animation:"loadbar 1.2s ease infinite"}}/>
+      </div>
+      <style>{`@keyframes loadbar{0%{width:0%;margin-left:0}50%{width:60%;margin-left:20%}100%{width:0%;margin-left:100%}}`}</style>
+    </div>
+  );
+
+  if (dbError) return (
+    <div style={{
+      minHeight:"100vh", background:C.bg,
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center", gap:12,
+      fontFamily:"Inter,sans-serif", padding:24,
+    }}>
+      <Logo size={48}/>
+      <div style={{fontSize:15, fontWeight:700, color:C.red}}>Erreur de connexion</div>
+      <div style={{fontSize:12, color:C.gray, textAlign:"center", maxWidth:320}}>{dbError}</div>
+      <button onClick={loadContacts} style={{
+        padding:"10px 20px", background:C.red, border:"none",
+        borderRadius:10, color:"#fff", fontSize:13, fontWeight:700,
+        cursor:"pointer", fontFamily:"Inter,sans-serif", marginTop:8,
+      }}>Réessayer</button>
+    </div>
+  );
+
+  return (
+    <Dashboard
+      contacts={contacts}
+      onSelect={c => setSelected(c)}
+      selected={selected}
+      onDeselect={() => setSelected(null)}
+      onSaveContact={saveContact}
+      onRefresh={loadContacts}
+    />
+  );
 }
