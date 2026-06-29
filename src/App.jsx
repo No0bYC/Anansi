@@ -828,12 +828,14 @@ function AddContactModal({onClose,onSave,existingContacts=[]}){
                 )}
                 {existingContacts.map(ec=>{
                   const sel=form.selected_connections.find(x=>x.id===ec.id);
+                  const selBorder=sel?"1px solid rgba(26,122,74,0.3)":`1px solid ${C.grayLight}`;
+                  const btnBorder=sel?`1px solid ${C.green}`:`1px solid ${C.grayLight}`;
                   return(
-                    <div key={ec.id} style={{background:sel?"#F0FFF6":"#F7F7F7",border:`1px solid ${sel?"rgba(26,122,74,0.3)":C.grayLight}`,borderRadius:10,padding:"10px 12px",marginBottom:8,transition:"all 0.15s"}}>
+                    <div key={ec.id} style={{background:sel?"#F0FFF6":"#F7F7F7",border:selBorder,borderRadius:10,padding:"10px 12px",marginBottom:8,transition:"all 0.15s"}}>
                       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:sel?8:0}}>
                         <div style={{width:32,height:32,borderRadius:"50%",background:sel?C.green:C.grayLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:sel?"#fff":C.gray,flexShrink:0}}>{ec.initials||(ec.first_name?.[0]||"")+(ec.last_name?.[0]||"")}</div>
                         <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.black}}>{ec.first_name} {ec.last_name}</div><div style={{fontSize:10,color:C.gray}}>{ec.role}</div></div>
-                        <button onClick={()=>{if(sel){set("selected_connections",form.selected_connections.filter(x=>x.id!==ec.id))}else{set("selected_connections",[...form.selected_connections,{id:ec.id,relation_type:""}])}}} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${sel?C.green:C.grayLight}`,background:sel?"rgba(26,122,74,0.1)":"none",color:sel?C.green:C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>
+                        <button onClick={()=>{if(sel){set("selected_connections",form.selected_connections.filter(x=>x.id!==ec.id))}else{set("selected_connections",[...form.selected_connections,{id:ec.id,relation_type:""}])}}} style={{padding:"5px 10px",borderRadius:8,border:btnBorder,background:sel?"rgba(26,122,74,0.1)":"none",color:sel?C.green:C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>
                           {sel?"✓ Lié":"+ Lier"}
                         </button>
                       </div>
