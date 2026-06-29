@@ -403,15 +403,23 @@ function NetworkGraph({contacts,onSelect}){
       });
       nodesRef.current.forEach(n=>{
         const hov=n.id===hovRef.current,score=healthScore(n.contact),hcol=healthColor(score);
-        if(hov){ctx.beginPath();ctx.arc(n.x,n.y,n.r+8,0,Math.PI*2);ctx.fillStyle="rgba(204,0,0,0.07)";ctx.fill();}
-        ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
-        ctx.fillStyle="#fff";ctx.fill();
-        ctx.strokeStyle=hov?C.red:"rgba(0,0,0,0.1)";ctx.lineWidth=hov?1.5:1;ctx.stroke();
-        ctx.fillStyle=C.black;ctx.font=`bold ${n.r*0.55}px Inter,sans-serif`;
-        ctx.textAlign="center";ctx.textBaseline="middle";
-        ctx.fillText(n.contact.initials,n.x,n.y);
-        ctx.beginPath();ctx.arc(n.x+n.r*0.65,n.y-n.r*0.65,4,0,Math.PI*2);ctx.fillStyle=hcol;ctx.fill();
-        if(hov){ctx.fillStyle=C.black;ctx.font=`500 10px Inter,sans-serif`;ctx.fillText(n.contact.first_name,n.x,n.y+n.r+13);}
+        const displayR=hov?n.r*1.35:n.r; // expand on hover
+        if(hov){ctx.beginPath();ctx.arc(n.x,n.y,displayR+8,0,Math.PI*2);ctx.fillStyle="rgba(204,0,0,0.07)";ctx.fill();}
+        ctx.beginPath();ctx.arc(n.x,n.y,displayR,0,Math.PI*2);
+        ctx.fillStyle=hov?C.red:"#fff";ctx.fill();
+        ctx.strokeStyle=hov?C.red:"rgba(0,0,0,0.1)";ctx.lineWidth=hov?2:1;ctx.stroke();
+        if(hov){
+          // Show full name inside expanded bubble
+          const fullName=`${n.contact.first_name} ${n.contact.last_name}`;
+          ctx.fillStyle="#fff";ctx.font=`bold ${Math.max(8,displayR*0.32)}px Inter,sans-serif`;
+          ctx.textAlign="center";ctx.textBaseline="middle";
+          ctx.fillText(fullName,n.x,n.y);
+        } else {
+          ctx.fillStyle=C.black;ctx.font=`bold ${n.r*0.55}px Inter,sans-serif`;
+          ctx.textAlign="center";ctx.textBaseline="middle";
+          ctx.fillText(n.contact.initials,n.x,n.y);
+        }
+        ctx.beginPath();ctx.arc(n.x+displayR*0.65,n.y-displayR*0.65,4,0,Math.PI*2);ctx.fillStyle=hcol;ctx.fill();
       });
       animRef.current=requestAnimationFrame(loop);
     };
@@ -419,8 +427,9 @@ function NetworkGraph({contacts,onSelect}){
     return()=>cancelAnimationFrame(animRef.current);
   },[contacts]);
   const onMove=useCallback((e)=>{const rect=canvasRef.current.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top,hit=nodesRef.current.find(n=>{const dx=n.x-mx,dy=n.y-my;return Math.sqrt(dx*dx+dy*dy)<n.r+4;});hovRef.current=hit?hit.id:null;canvasRef.current.style.cursor=hit?"pointer":"default";},[]);
+  const onTouch=useCallback((e)=>{const rect=canvasRef.current.getBoundingClientRect(),t=e.touches[0],mx=t.clientX-rect.left,my=t.clientY-rect.top,hit=nodesRef.current.find(n=>{const dx=n.x-mx,dy=n.y-my;return Math.sqrt(dx*dx+dy*dy)<n.r+16;});hovRef.current=hit?hit.id:null;},[]);
   const onClick=useCallback((e)=>{const rect=canvasRef.current.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top,hit=nodesRef.current.find(n=>{const dx=n.x-mx,dy=n.y-my;return Math.sqrt(dx*dx+dy*dy)<n.r+4;});if(hit)onSelect(hit.contact);},[onSelect]);
-  return <canvas ref={canvasRef} onMouseMove={onMove} onClick={onClick} style={{width:"100%",height:"100%",display:"block"}}/>;
+  return <canvas ref={canvasRef} onMouseMove={onMove} onTouchStart={onTouch} onTouchMove={onTouch} onTouchEnd={()=>{setTimeout(()=>{hovRef.current=null;},800);}} onClick={onClick} style={{width:"100%",height:"100%",display:"block"}}/>;
 }
 
 // ── SCORE RING ─────────────────────────────────────────────────────────────────
@@ -441,25 +450,40 @@ function Ring({value,max=10,color,size=44,label}){
 // ── CONTACT CARD CONTENT ──────────────────────────────────────────────────────
 function ContactCardContent({contact:c,contacts,onSelect,isMobile}){
   const [tab,setTab]=useState("brief");
+  const [photoErr,setPhotoErr]=useState(false);
   const score=healthScore(c),hcol=healthColor(score);
   const state=STATE_CONFIG[c.emotional_state]||{label:"–",color:C.gray};
   const lever=LEVER_CONFIG[c.primary_lever]||{icon:"·",desc:"–"};
   const shouldMeet=contacts.filter(other=>{
-    if(other.id===c.id||c.connections.includes(other.id))return false;
+    if(other.id===c.id||(c.connections||[]).includes(other.id))return false;
     return other.sector===c.sector||(other.hobbies||[]).some(h=>(c.hobbies||[]).includes(h));
   });
   const Tag=({children})=>(<span style={{display:"inline-flex",padding:"3px 8px",borderRadius:20,fontSize:11,fontWeight:500,background:`${C.red}12`,color:C.red,margin:2}}>{children}</span>);
+
+  const initials=(c.first_name?.[0]||"")+(c.last_name?.[0]||"");
+  const genreLabel=c.genre==="F"?"Mme":"M.";
+  const myRelation=Array.isArray(c.my_relation)?(c.my_relation||[]).join(", "):(c.my_relation||"");
+  const aliasStr=c.alias?` "${c.alias}"`:""
+  const maidenStr=c.genre==="F"&&c.maiden_name?` (née ${c.maiden_name})`:"";
+  const fullDisplayName=`${genreLabel} ${c.first_name||""} ${c.last_name||""}${aliasStr}${maidenStr}`;
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       {/* Header */}
       <div style={{padding:"14px 16px 0",borderBottom:`1px solid ${C.grayLight}`,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
-          <div style={{width:44,height:44,borderRadius:"50%",background:C.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:"#fff",flexShrink:0}}>{c.initials}</div>
+          {/* Avatar with photo support */}
+          <div style={{width:48,height:48,borderRadius:"50%",background:C.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:700,color:"#fff",flexShrink:0,overflow:"hidden"}}>
+            {c.photo_url&&!photoErr
+              ?<img src={c.photo_url} alt={c.first_name} onError={()=>setPhotoErr(true)} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              :<span>{c.initials||initials}</span>
+            }
+          </div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:16,fontWeight:800,color:C.black}}>{c.first_name} {c.last_name}</div>
-            <div style={{fontSize:11,color:C.red}}>{c.role} · {c.company}</div>
-            <div style={{fontSize:10,color:C.gray}}>{c.location_city} · {c.last_interaction}</div>
+            <div style={{fontSize:14,fontWeight:800,color:C.black,lineHeight:1.2}}>{fullDisplayName}</div>
+            {myRelation&&<div style={{fontSize:10,color:C.red,marginTop:2,fontWeight:600}}>{myRelation}</div>}
+            <div style={{fontSize:11,color:C.gray,marginTop:1}}>{[c.role,c.company].filter(Boolean).join(" · ")}</div>
+            <div style={{fontSize:10,color:C.gray}}>{[c.location_city,c.last_interaction].filter(Boolean).join(" · ")}</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
@@ -482,10 +506,10 @@ function ContactCardContent({contact:c,contacts,onSelect,isMobile}){
           </div>
           <div style={{background:"#F7F7F7",borderRadius:10,padding:"10px 12px"}}>
             <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Points de discussion</div>
-            {c.discussion_points.map((p,i)=>(<div key={i} style={{display:"flex",gap:6,fontSize:12,color:C.blackSoft,marginBottom:4,lineHeight:1.4}}><span style={{color:C.red,flexShrink:0}}>·</span>{p}</div>))}
+            {(c.discussion_points||[]).map((p,i)=>(<div key={i} style={{display:"flex",gap:6,fontSize:12,color:C.blackSoft,marginBottom:4,lineHeight:1.4}}><span style={{color:C.red,flexShrink:0}}>·</span>{p}</div>))}
           </div>
-          <div><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>À éviter</div>{c.topics_to_avoid.map((t,i)=>(<div key={i} style={{display:"flex",gap:6,fontSize:12,color:"#999",marginBottom:3}}><span style={{color:C.red}}>✕</span>{t}</div>))}</div>
-          <div><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>Intérêts</div><div>{c.hobbies.map(h=><Tag key={h}>{h}</Tag>)}</div></div>
+          <div><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>À éviter</div>{(c.topics_to_avoid||[]).map((t,i)=>(<div key={i} style={{display:"flex",gap:6,fontSize:12,color:"#999",marginBottom:3}}><span style={{color:C.red}}>✕</span>{t}</div>))}</div>
+          <div><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>Intérêts</div><div>{(c.hobbies||[]).map(h=><Tag key={h}>{h}</Tag>)}</div></div>
           <div style={{background:"#F7F7F7",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontWeight:600}}>Note</div><div style={{fontSize:12,color:C.blackSoft,lineHeight:1.6}}>{c.notes}</div></div>
         </div>)}
 
@@ -575,10 +599,280 @@ function HexFAB({onClick}){
 }
 
 // ── ADD CONTACT MODAL ──────────────────────────────────────────────────────────
-const SECTORS=["Finance","Tourisme","Tech","Associatif","Banking","Legal","Santé","Éducation","Autre"];
+const SECTORS_DEFAULT=["Finance","Tourisme","Tech","Associatif","Banking","Legal","Santé","Éducation","Immobilier","Politique","Media","Sport","Art","Autre"];
 const LEVERS=["statut","réciprocité","appartenance","intérêt","cohérence"];
 const STATES=["expansion","stable","stress","transition"];
 const EGOS=["faire","avoir","être perçu"];
+const RELATION_TYPES=["Famille","Ami(e)","Collègue","Partenaire","Connaissance","Voisin","Mentor","Mentee","Client","Fournisseur","Investisseur","Concurrent"];
+const COUNTRY_CODES=[{code:"+230",flag:"🇲🇺",name:"MU"},{code:"+33",flag:"🇫🇷",name:"FR"},{code:"+1",flag:"🇺🇸",name:"US"},{code:"+44",flag:"🇬🇧",name:"GB"},{code:"+27",flag:"🇿🇦",name:"ZA"},{code:"+91",flag:"🇮🇳",name:"IN"},{code:"+86",flag:"🇨🇳",name:"CN"},{code:"+49",flag:"🇩🇪",name:"DE"},{code:"+971",flag:"🇦🇪",name:"AE"},{code:"+254",flag:"🇰🇪",name:"KE"},{code:"+221",flag:"🇸🇳",name:"SN"},{code:"+225",flag:"🇨🇮",name:"CI"}];
+
+function AddContactModal({onClose,onSave,existingContacts=[]}){
+  const [step,setStep]=useState(1);
+  const [customSectors,setCustomSectors]=useState([]);
+  const [newSector,setNewSector]=useState("");
+  const [showNewSector,setShowNewSector]=useState(false);
+  const [form,setForm]=useState({
+    genre:"M",first_name:"",last_name:"",alias:"",maiden_name:"",
+    role:"",company:"",sector:"",location_city:"",
+    country_code:"+230",phone:"",email:"",linkedin:"",
+    hobbies:"",discussion_points:"",topics_to_avoid:"",notes:"",
+    primary_lever:"",emotional_state:"",ego_type:"",
+    current_desire:"",red_lines:"",
+    utility_score:5,sentiment_score:5,reliability_score:5,
+    known_personally:true,my_relation:[],
+    // Step 4 — connections to existing
+    selected_connections:[],
+  });
+
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const toggleMulti=(k,v)=>setForm(f=>({...f,[k]:f[k].includes(v)?f[k].filter(x=>x!==v):[...f[k],v]}));
+  const allSectors=[...SECTORS_DEFAULT,...customSectors];
+
+  const isStep1Valid=form.first_name.trim()&&form.last_name.trim();
+
+  const handleSave=()=>{
+    const contact={
+      ...form,
+      initials:(form.first_name[0]||"")+(form.last_name[0]||""),
+      hobbies:form.hobbies.split(",").map(h=>h.trim()).filter(Boolean),
+      discussion_points:form.discussion_points.split("\n").map(h=>h.trim()).filter(Boolean),
+      topics_to_avoid:form.topics_to_avoid.split("\n").map(h=>h.trim()).filter(Boolean),
+      phone:`${form.country_code}${form.phone}`,
+      connections:form.selected_connections.map(c=>c.id),
+      related:[],interactions:[],reminders:[],tags:[],
+      last_interaction:new Date().toISOString().split("T")[0],
+      utility_score:Number(form.utility_score),
+      sentiment_score:Number(form.sentiment_score),
+      reliability_score:Number(form.reliability_score),
+      influence_score:5,reciprocity_score:5,momentum_score:5,potential_score:5,relational_debt:0,
+    };
+    onSave(contact);
+    onClose();
+  };
+
+  const inp={width:"100%",padding:"10px 12px",background:"#F7F7F7",border:`1px solid ${C.grayLight}`,borderRadius:8,color:C.black,fontSize:13,fontFamily:"Inter,sans-serif",outline:"none",transition:"border-color 0.15s"};
+  const lbl={fontSize:10,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",display:"block",marginBottom:5,fontWeight:600};
+  const field=(l,k,type="text",ph="")=>(
+    <div style={{marginBottom:12}}>
+      <label style={lbl}>{l}</label>
+      <input type={type} value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={ph} style={inp}
+        onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.grayLight}/>
+    </div>
+  );
+  const textarea=(l,k,ph="",rows=3)=>(
+    <div style={{marginBottom:12}}>
+      <label style={lbl}>{l}</label>
+      <textarea value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={ph} rows={rows}
+        style={{...inp,resize:"vertical"}}
+        onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.grayLight}/>
+    </div>
+  );
+  const chips=(l,k,options,multi=false)=>(
+    <div style={{marginBottom:12}}>
+      <label style={lbl}>{l}</label>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {options.map(o=>{
+          const active=multi?form[k].includes(o):form[k]===o;
+          return(<button key={o} onClick={()=>multi?toggleMulti(k,o):set(k,o)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#F7F7F7",color:active?"#fff":C.black,border:`1px solid ${active?C.red:C.grayLight}`,transition:"all 0.15s"}}>{o}</button>);
+        })}
+      </div>
+    </div>
+  );
+  const scoreSlider=(l,k)=>(
+    <div style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+        <label style={{...lbl,marginBottom:0}}>{l}</label>
+        <span style={{fontSize:13,fontWeight:700,color:healthColor(form[k]*10)}}>{form[k]}</span>
+      </div>
+      <input type="range" min={0} max={10} value={form[k]} onChange={e=>set(k,Number(e.target.value))} style={{width:"100%",accentColor:C.red,cursor:"pointer"}}/>
+    </div>
+  );
+
+  const TOTAL_STEPS=4;
+  const stepTitles=["Identité","Psyché & Contexte","Métriques","Connexions"];
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100,backdropFilter:"blur(2px)"}}>
+      <div style={{background:C.bg,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:520,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 40px rgba(0,0,0,0.15)",animation:"slideUp 0.3s cubic-bezier(0.34,1.1,0.64,1)"}}>
+        <style>{`@keyframes slideUp{from{transform:translateY(60px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
+
+        {/* Header */}
+        <div style={{padding:"20px 20px 0",flexShrink:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div>
+              <div style={{fontSize:17,fontWeight:800,color:C.black}}>Nouveau contact</div>
+              <div style={{fontSize:11,color:C.gray,marginTop:2}}>{stepTitles[step-1]} — étape {step}/{TOTAL_STEPS}</div>
+            </div>
+            <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,color:C.gray,lineHeight:1,padding:4}}>×</button>
+          </div>
+          <div style={{display:"flex",gap:4,marginBottom:20}}>
+            {Array.from({length:TOTAL_STEPS},(_,i)=>i+1).map(s=>(
+              <div key={s} style={{flex:1,height:3,borderRadius:2,background:s<=step?C.red:C.grayLight,transition:"background 0.3s ease"}}/>
+            ))}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{flex:1,overflowY:"auto",padding:"0 20px"}}>
+
+          {/* ── STEP 1: Identité ── */}
+          {step===1&&(
+            <>
+              {/* Genre */}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Genre</label>
+                <div style={{display:"flex",gap:8}}>
+                  {[{v:"M",l:"M."},{v:"F",l:"Mme"}].map(({v,l})=>(
+                    <button key={v} onClick={()=>set("genre",v)} style={{flex:1,padding:"9px",borderRadius:8,cursor:"pointer",fontFamily:"Inter,sans-serif",fontSize:13,fontWeight:600,border:`1px solid ${form.genre===v?C.red:C.grayLight}`,background:form.genre===v?C.redSoft:C.bgSoft,color:form.genre===v?C.red:C.gray,transition:"all 0.15s"}}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              {/* Name row */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:0}}>
+                <div>{field("Prénom *","first_name","text","Arjun")}</div>
+                <div>{field("Nom *","last_name","text","Mehta")}</div>
+              </div>
+              {field("Alias / Surnom","alias","text","Ex: Tony, JP...")}
+              {form.genre==="F"&&field("Nom de jeune fille","maiden_name","text","Nom de naissance")}
+              {/* My relation — multi */}
+              {chips("Ma relation avec cette personne","my_relation",RELATION_TYPES,true)}
+              {field("Poste","role","text","CEO")}
+              {field("Entreprise","company","text","Nexus Capital")}
+              {/* Sector with add custom */}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Secteur</label>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                  {allSectors.map(o=>{const active=form.sector===o;return(
+                    <button key={o} onClick={()=>set("sector",o)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#F7F7F7",color:active?"#fff":C.black,border:`1px solid ${active?C.red:C.grayLight}`,transition:"all 0.15s"}}>{o}</button>
+                  );})}
+                  <button onClick={()=>setShowNewSector(p=>!p)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:"none",color:C.red,border:`1px dashed ${C.red}`}}>+ Ajouter</button>
+                </div>
+                {showNewSector&&(
+                  <div style={{display:"flex",gap:6}}>
+                    <input value={newSector} onChange={e=>setNewSector(e.target.value)} placeholder="Nouveau secteur..." style={{...inp,flex:1}} onKeyDown={e=>{if(e.key==="Enter"&&newSector.trim()){setCustomSectors(p=>[...p,newSector.trim()]);set("sector",newSector.trim());setNewSector("");setShowNewSector(false);}}}/>
+                    <button onClick={()=>{if(newSector.trim()){setCustomSectors(p=>[...p,newSector.trim()]);set("sector",newSector.trim());setNewSector("");setShowNewSector(false);}}} style={{padding:"10px 14px",background:C.red,border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
+                  </div>
+                )}
+              </div>
+              {field("Ville","location_city","text","Grand Baie")}
+              {/* Phone with country code */}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Téléphone</label>
+                <div style={{display:"flex",gap:6}}>
+                  <select value={form.country_code} onChange={e=>set("country_code",e.target.value)} style={{...inp,width:"auto",flexShrink:0,paddingRight:8,appearance:"none",cursor:"pointer"}}>
+                    {COUNTRY_CODES.map(c=>(<option key={c.code} value={c.code}>{c.flag} {c.code}</option>))}
+                  </select>
+                  <input type="tel" value={form.phone} onChange={e=>set("phone",e.target.value)} placeholder="5xxx xxxx" style={inp} onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.grayLight}/>
+                </div>
+              </div>
+              {field("Email","email","email","arjun@nexus.mu")}
+              {field("LinkedIn","linkedin","text","linkedin.com/in/...")}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Connu personnellement</label>
+                <div style={{display:"flex",gap:8}}>
+                  {[{v:true,l:"Oui"},{v:false,l:"Non — contact indirect"}].map(({v,l})=>(
+                    <button key={String(v)} onClick={()=>set("known_personally",v)} style={{flex:1,padding:"9px",borderRadius:8,cursor:"pointer",fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:500,border:`1px solid ${form.known_personally===v?C.red:C.grayLight}`,background:form.known_personally===v?C.redSoft:C.bgSoft,color:form.known_personally===v?C.red:C.gray,transition:"all 0.15s"}}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── STEP 2: Psyché ── */}
+          {step===2&&(
+            <>
+              {chips("État émotionnel","emotional_state",STATES)}
+              {chips("Ego dominant","ego_type",EGOS)}
+              {chips("Levier principal","primary_lever",LEVERS)}
+              {field("Désir actuel","current_desire","text","Ce qu'il cherche en ce moment...")}
+              {field("Ligne rouge","red_lines","text","Ce qu'il ne faut jamais faire ou dire...")}
+              {textarea("Points de discussion","discussion_points","Un point par ligne...",3)}
+              {textarea("Sujets à éviter","topics_to_avoid","Un sujet par ligne...",2)}
+              {field("Hobbies & Intérêts","hobbies","text","Golf, Voile, Gastronomie (séparés par virgule)")}
+              {textarea("Notes personnelles","notes","Contexte de la rencontre, observations...",3)}
+            </>
+          )}
+
+          {/* ── STEP 3: Métriques ── */}
+          {step===3&&(
+            <>
+              <div style={{background:C.redSoft,borderRadius:12,padding:"12px 14px",marginBottom:16,borderLeft:`3px solid ${C.red}`}}>
+                <div style={{fontSize:11,color:C.red,fontWeight:600,marginBottom:4}}>Métriques subjectives</div>
+                <div style={{fontSize:11,color:C.gray,lineHeight:1.5}}>Ces scores sont privés. Ils alimentent le score de santé de la relation.</div>
+              </div>
+              {scoreSlider("Utilité — Pertinence pour mes objectifs","utility_score")}
+              {scoreSlider("Sentiment — Mon appréciation personnelle","sentiment_score")}
+              {scoreSlider("Fiabilité — Niveau de confiance","reliability_score")}
+              {/* Preview */}
+              <div style={{background:"#F7F7F7",borderRadius:12,padding:"14px",marginBottom:12}}>
+                <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10,fontWeight:600}}>Aperçu</div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:40,height:40,borderRadius:"50%",background:C.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff",flexShrink:0}}>{(form.first_name[0]||"?")+( form.last_name[0]||"")}</div>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:700,color:C.black}}>{form.genre==="F"?"Mme":"M."} {form.first_name||"Prénom"} {form.last_name||"Nom"}{form.alias?` "${form.alias}":""}</div>
+                    <div style={{fontSize:11,color:C.red}}>{[form.role,form.company].filter(Boolean).join(" · ")||"Poste · Entreprise"}</div>
+                    {(form.my_relation||[]).length>0&&<div style={{fontSize:10,color:C.gray}}>{form.my_relation.join(", ")}</div>}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── STEP 4: Connexions ── */}
+          {step===4&&(
+            <>
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,color:C.gray,lineHeight:1.5,marginBottom:12}}>Sélectionne les contacts existants liés à cette personne et définis le type de relation.</div>
+                {existingContacts.length===0&&(
+                  <div style={{textAlign:"center",padding:"20px",color:C.gray,fontSize:12,background:"#F7F7F7",borderRadius:10}}>Aucun contact existant dans ta base pour l'instant.</div>
+                )}
+                {existingContacts.map(ec=>{
+                  const sel=form.selected_connections.find(x=>x.id===ec.id);
+                  return(
+                    <div key={ec.id} style={{background:sel?"#F0FFF6":"#F7F7F7",border:`1px solid ${sel?"rgba(26,122,74,0.3)":C.grayLight}`,borderRadius:10,padding:"10px 12px",marginBottom:8,transition:"all 0.15s"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:sel?8:0}}>
+                        <div style={{width:32,height:32,borderRadius:"50%",background:sel?C.green:C.grayLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:sel?"#fff":C.gray,flexShrink:0}}>{ec.initials||(ec.first_name?.[0]||"")+(ec.last_name?.[0]||"")}</div>
+                        <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.black}}>{ec.first_name} {ec.last_name}</div><div style={{fontSize:10,color:C.gray}}>{ec.role}</div></div>
+                        <button onClick={()=>{if(sel){set("selected_connections",form.selected_connections.filter(x=>x.id!==ec.id))}else{set("selected_connections",[...form.selected_connections,{id:ec.id,relation_type:""}])}}} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${sel?C.green:C.grayLight}`,background:sel?"rgba(26,122,74,0.1)":"none",color:sel?C.green:C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>
+                          {sel?"✓ Lié":"+ Lier"}
+                        </button>
+                      </div>
+                      {sel&&(
+                        <div style={{display:"flex",flexWrap:"wrap",gap:5,paddingLeft:42}}>
+                          {RELATION_TYPES.map(rt=>{const active=sel.relation_type===rt;return(
+                            <button key={rt} onClick={()=>set("selected_connections",form.selected_connections.map(x=>x.id===ec.id?{...x,relation_type:rt}:x))} style={{padding:"3px 9px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.green:"#fff",color:active?"#fff":C.gray,border:`1px solid ${active?C.green:C.grayLight}`,transition:"all 0.15s"}}>{rt}</button>
+                          );})}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {form.selected_connections.length>0&&(
+                  <div style={{background:`${C.green}10`,borderRadius:10,padding:"10px 12px",border:`1px solid rgba(26,122,74,0.2)`}}>
+                    <div style={{fontSize:11,color:C.green,fontWeight:600}}>{form.selected_connections.length} connexion{form.selected_connections.length>1?"s":""} sélectionnée{form.selected_connections.length>1?"s":""}</div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          <div style={{height:16}}/>
+        </div>
+
+        {/* Footer */}
+        <div style={{padding:"12px 20px 28px",borderTop:`1px solid ${C.grayLight}`,display:"flex",gap:8,flexShrink:0}}>
+          {step>1&&<button onClick={()=>setStep(s=>s-1)} style={{flex:1,padding:"12px",background:"#F7F7F7",border:`1px solid ${C.grayLight}`,borderRadius:12,color:C.black,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>← Retour</button>}
+          {step<TOTAL_STEPS?(
+            <button onClick={()=>{if(step===1&&!isStep1Valid)return;setStep(s=>s+1);}} style={{flex:2,padding:"12px",background:step===1&&!isStep1Valid?"rgba(204,0,0,0.3)":C.red,border:"none",borderRadius:12,color:"#fff",fontSize:13,fontWeight:700,cursor:step===1&&!isStep1Valid?"not-allowed":"pointer",fontFamily:"Inter,sans-serif",transition:"background 0.15s"}}>
+              Continuer →
+            </button>
+          ):(
+            <button onClick={handleSave} style={{flex:2,padding:"12px",background:C.red,border:"none",borderRadius:12,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>✓ Créer la carte</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AddContactModal({onClose,onSave}){
   const [step,setStep]=useState(1); // 3 steps
@@ -887,95 +1181,115 @@ function Dashboard({contacts:baseContacts,onSelect,selected,onDeselect,onSaveCon
   const stateColor={expansion:C.green,stable:C.blue,stress:C.red,transition:C.amber};
   const leverColor={statut:C.amber,réciprocité:C.blue,appartenance:"#6A0DAD",intérêt:C.green,cohérence:C.black};
 
+  const [sidebarOpen,setSidebarOpen]=useState(!isMobile);
+
   // Filter sidebar component (inline)
   const FilterSidebar=()=>(
-    <div style={{width:isMobile?"100%":180,flexShrink:0,borderRight:isMobile?"none":`1px solid ${C.grayLight}`,background:"#FAFAFA",overflowY:"auto",padding:"12px 10px",display:"flex",flexDirection:"column",gap:16}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-        <span style={{fontSize:10,fontWeight:700,color:C.black,textTransform:"uppercase",letterSpacing:"0.08em"}}>Filtres {activeFilterCount>0&&<span style={{background:C.red,color:"#fff",borderRadius:10,padding:"1px 6px",fontSize:9,marginLeft:4}}>{activeFilterCount}</span>}</span>
-        {activeFilterCount>0&&<button onClick={clearFilters} style={{fontSize:10,color:C.red,background:"none",border:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>Effacer</button>}
+    <>
+      {/* Toggle button — always visible */}
+      <div style={{flexShrink:0,display:"flex",flexDirection:"column",alignItems:"center",borderRight:`1px solid ${C.grayLight}`,background:"#FAFAFA"}}>
+        <button onClick={()=>setSidebarOpen(p=>!p)} style={{
+          width:32,height:52,background:"none",border:"none",cursor:"pointer",
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,
+          color:activeFilterCount>0?C.red:C.gray,WebkitTapHighlightColor:"transparent",
+          borderBottom:`1px solid ${C.grayLight}`,
+        }} title={sidebarOpen?"Masquer les filtres":"Afficher les filtres"}>
+          <span style={{fontSize:14}}>⊞</span>
+          {activeFilterCount>0&&<span style={{fontSize:8,fontWeight:700,background:C.red,color:"#fff",borderRadius:10,padding:"1px 4px"}}>{activeFilterCount}</span>}
+        </button>
       </div>
 
-      {/* Known personally */}
-      <div>
-        <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Relation</div>
-        {[{label:"Connu personnellement",val:true},{label:"Contact indirect",val:false}].map(({label,val})=>(
-          <button key={String(val)} onClick={()=>setFilters(f=>({...f,known_personally:f.known_personally===val?null:val}))} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:filters.known_personally===val?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
-            <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${filters.known_personally===val?C.red:C.grayLight}`,background:filters.known_personally===val?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-              {filters.known_personally===val&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
+      {/* Collapsible panel */}
+      {sidebarOpen&&(
+        <div style={{width:isMobile?"100%":176,flexShrink:0,borderRight:isMobile?"none":`1px solid ${C.grayLight}`,background:"#FAFAFA",overflowY:"auto",padding:"10px 10px",display:"flex",flexDirection:"column",gap:14,animation:"slideRight 0.2s ease"}}>
+          <style>{`@keyframes slideRight{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}`}</style>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span style={{fontSize:10,fontWeight:700,color:C.black,textTransform:"uppercase",letterSpacing:"0.08em"}}>Filtres {activeFilterCount>0&&<span style={{background:C.red,color:"#fff",borderRadius:10,padding:"1px 6px",fontSize:9,marginLeft:4}}>{activeFilterCount}</span>}</span>
+            {activeFilterCount>0&&<button onClick={clearFilters} style={{fontSize:10,color:C.red,background:"none",border:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>Effacer</button>}
+          </div>
+
+          {/* Known personally */}
+          <div>
+            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Relation</div>
+            {[{label:"Connu",val:true},{label:"Indirect",val:false}].map(({label,val})=>(
+              <button key={String(val)} onClick={()=>setFilters(f=>({...f,known_personally:f.known_personally===val?null:val}))} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:filters.known_personally===val?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+                <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${filters.known_personally===val?C.red:C.grayLight}`,background:filters.known_personally===val?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {filters.known_personally===val&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
+                </div>
+                <span style={{fontSize:11,color:filters.known_personally===val?C.red:C.black}}>{label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Sector */}
+          {opts.sector.length>0&&(
+            <div>
+              <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Secteur</div>
+              {opts.sector.map(v=>{const active=filters.sector.includes(v);return(
+                <button key={v} onClick={()=>toggleFilter("sector",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+                  <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${active?C.red:C.grayLight}`,background:active?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    {active&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
+                  </div>
+                  <span style={{fontSize:11,color:active?C.red:C.black,flex:1}}>{v}</span>
+                  <span style={{fontSize:9,color:C.gray}}>{contacts.filter(c=>c.sector===v).length}</span>
+                </button>
+              );})}
             </div>
-            <span style={{fontSize:11,color:filters.known_personally===val?C.red:C.black}}>{label}</span>
-          </button>
-        ))}
-      </div>
+          )}
 
-      {/* Sector */}
-      {opts.sector.length>0&&(
-        <div>
-          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Secteur</div>
-          {opts.sector.map(v=>{const active=filters.sector.includes(v);return(
-            <button key={v} onClick={()=>toggleFilter("sector",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
-              <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${active?C.red:C.grayLight}`,background:active?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {active&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
-              </div>
-              <span style={{fontSize:11,color:active?C.red:C.black}}>{v}</span>
-              <span style={{fontSize:9,color:C.gray,marginLeft:"auto"}}>{contacts.filter(c=>c.sector===v).length}</span>
-            </button>
-          );})}
+          {/* State */}
+          {opts.emotional_state.length>0&&(
+            <div>
+              <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>État</div>
+              {opts.emotional_state.map(v=>{const active=filters.emotional_state.includes(v);const col=stateColor[v]||C.gray;return(
+                <button key={v} onClick={()=>toggleFilter("emotional_state",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${col}15`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:col,flexShrink:0}}/>
+                  <span style={{fontSize:11,color:active?col:C.black,flex:1}}>{stateLabel[v]||v}</span>
+                  <span style={{fontSize:9,color:C.gray}}>{contacts.filter(c=>c.emotional_state===v).length}</span>
+                </button>
+              );})}
+            </div>
+          )}
+
+          {/* Lever */}
+          {opts.primary_lever.length>0&&(
+            <div>
+              <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Levier</div>
+              {opts.primary_lever.map(v=>{const active=filters.primary_lever.includes(v);const col=leverColor[v]||C.gray;return(
+                <button key={v} onClick={()=>toggleFilter("primary_lever",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${col}15`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+                  <span style={{fontSize:12,flexShrink:0}}>{LEVER_CONFIG[v]?.icon||"·"}</span>
+                  <span style={{fontSize:11,color:active?col:C.black,flex:1}}>{leverLabel[v]||v}</span>
+                  <span style={{fontSize:9,color:C.gray}}>{contacts.filter(c=>c.primary_lever===v).length}</span>
+                </button>
+              );})}
+            </div>
+          )}
+
+          {/* Ego */}
+          {opts.ego_type.length>0&&(
+            <div>
+              <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Ego</div>
+              {opts.ego_type.map(v=>{const active=filters.ego_type.includes(v);return(
+                <button key={v} onClick={()=>toggleFilter("ego_type",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+                  <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${active?C.red:C.grayLight}`,background:active?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    {active&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
+                  </div>
+                  <span style={{fontSize:11,color:active?C.red:C.black,flex:1}}>{v}</span>
+                  <span style={{fontSize:9,color:C.gray}}>{contacts.filter(c=>c.ego_type===v).length}</span>
+                </button>
+              );})}
+            </div>
+          )}
+
+          {activeFilterCount>0&&(
+            <div style={{background:C.redSoft,borderRadius:8,padding:"8px 10px",border:`1px solid ${C.redMid}`}}>
+              <div style={{fontSize:10,color:C.red,fontWeight:600}}>{filtered.length} contact{filtered.length!==1?"s":""}</div>
+              <div style={{fontSize:9,color:C.red}}>{contacts.length} au total</div>
+            </div>
+          )}
         </div>
       )}
-
-      {/* Emotional state */}
-      {opts.emotional_state.length>0&&(
-        <div>
-          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>État</div>
-          {opts.emotional_state.map(v=>{const active=filters.emotional_state.includes(v);const col=stateColor[v]||C.gray;return(
-            <button key={v} onClick={()=>toggleFilter("emotional_state",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${col}15`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
-              <div style={{width:8,height:8,borderRadius:"50%",background:col,flexShrink:0}}/>
-              <span style={{fontSize:11,color:active?col:C.black}}>{stateLabel[v]||v}</span>
-              <span style={{fontSize:9,color:C.gray,marginLeft:"auto"}}>{contacts.filter(c=>c.emotional_state===v).length}</span>
-            </button>
-          );})}
-        </div>
-      )}
-
-      {/* Primary lever */}
-      {opts.primary_lever.length>0&&(
-        <div>
-          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Levier</div>
-          {opts.primary_lever.map(v=>{const active=filters.primary_lever.includes(v);const col=leverColor[v]||C.gray;return(
-            <button key={v} onClick={()=>toggleFilter("primary_lever",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${col}15`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
-              <span style={{fontSize:12,flexShrink:0}}>{LEVER_CONFIG[v]?.icon||"·"}</span>
-              <span style={{fontSize:11,color:active?col:C.black}}>{leverLabel[v]||v}</span>
-              <span style={{fontSize:9,color:C.gray,marginLeft:"auto"}}>{contacts.filter(c=>c.primary_lever===v).length}</span>
-            </button>
-          );})}
-        </div>
-      )}
-
-      {/* Ego type */}
-      {opts.ego_type.length>0&&(
-        <div>
-          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Ego</div>
-          {opts.ego_type.map(v=>{const active=filters.ego_type.includes(v);return(
-            <button key={v} onClick={()=>toggleFilter("ego_type",v)} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 7px",borderRadius:7,background:active?`${C.red}12`:"transparent",border:"none",cursor:"pointer",marginBottom:3,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
-              <div style={{width:12,height:12,borderRadius:3,border:`1.5px solid ${active?C.red:C.grayLight}`,background:active?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {active&&<span style={{color:"#fff",fontSize:8,lineHeight:1}}>✓</span>}
-              </div>
-              <span style={{fontSize:11,color:active?C.red:C.black}}>{v}</span>
-              <span style={{fontSize:9,color:C.gray,marginLeft:"auto"}}>{contacts.filter(c=>c.ego_type===v).length}</span>
-            </button>
-          );})}
-        </div>
-      )}
-
-      {/* Active filter summary */}
-      {activeFilterCount>0&&(
-        <div style={{background:C.redSoft,borderRadius:8,padding:"8px 10px",border:`1px solid ${C.redMid}`}}>
-          <div style={{fontSize:10,color:C.red,fontWeight:600,marginBottom:3}}>{filtered.length} contact{filtered.length!==1?"s":""} correspondant{filtered.length!==1?"s":""}</div>
-          <div style={{fontSize:9,color:C.red}}>{contacts.length} au total</div>
-        </div>
-      )}
-    </div>
+    </>
   );
 
   // Shared topbar
@@ -1102,7 +1416,7 @@ function Dashboard({contacts:baseContacts,onSelect,selected,onDeselect,onSaveCon
       </div>
 
       {showImport&&<ImportTerminal onClose={()=>{setShowImport(false);onRefresh();}} onImport={(imported)=>console.log("Imported",imported.length)}/>}
-      {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={handleSaveContact}/>}
+      {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={handleSaveContact} existingContacts={contacts}/>}
       {/* Hex FAB — only visible when no modal is open */}
       {!showAddContact&&!showImport&&<HexFAB onClick={()=>setShowAddContact(true)}/>}
     </div>
@@ -1122,7 +1436,14 @@ function normalizeContact(row) {
     interactions: row.interactions || [],
     reminders: row.reminders || [],
     tags: row.tags || [],
+    my_relation: row.my_relation || [],
+    selected_connections: [],
     last_interaction: row.last_interaction || "–",
+    genre: row.genre || "M",
+    alias: row.alias || "",
+    maiden_name: row.maiden_name || "",
+    photo_url: row.photo_url || "",
+    country_code: row.country_code || "+230",
     utility_score: row.utility_score ?? 5,
     sentiment_score: row.sentiment_score ?? 5,
     reliability_score: row.reliability_score ?? 5,
@@ -1168,8 +1489,8 @@ export default function App(){
   }
 
   async function saveContact(contact) {
-    // Remove local-only fields before inserting
-    const { connections, related, interactions, reminders, ...rest } = contact;
+    // Strip client-side fields that shouldn't be inserted
+    const { id, connections, related, interactions, reminders, ...rest } = contact;
     const toInsert = {
       ...rest,
       connections: connections || [],
