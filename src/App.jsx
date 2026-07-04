@@ -424,22 +424,27 @@ function ImportTerminal({onClose,onBulkImport}){
 }
 
 // ── MINI RÉSEAU (fiche contact) ────────────────────────────────────────────────
-function ContactNetwork({contact,contacts,onSelect,height=280}){
+function ContactNetwork({contact,contacts,onSelect,height}){
   const canvasRef=useRef(null);
   const animRef=useRef(null);
   const nodesRef=useRef([]);
   useEffect(()=>{
     const canvas=canvasRef.current;if(!canvas)return;
     const dpr=window.devicePixelRatio||1;
-    const W=canvas.offsetWidth,H=canvas.offsetHeight||height;
+    const W=canvas.offsetWidth||300,H=canvas.offsetHeight||300;
     canvas.width=W*dpr;canvas.height=H*dpr;
     const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);
     const cx=W/2,cy=H/2;
+    const connMeta=contact.connection_types||{};
     const connSet=connectedIdsOf(contact,contacts);
     const connectedContacts=contacts.filter(c=>connSet.has(String(c.id)));
     const related=(contact.related||[]).filter(r=>!connectedContacts.find(c=>String(c.id)===String(r.id)));
     const outer=[
-      ...connectedContacts.map(c=>({id:c.id,label:c.initials||"?",name:c.first_name,color:C.red,textColor:"#fff",known:true,contactObj:c,relLabel:"connexion"})),
+      ...connectedContacts.map(c=>{
+        const owned=(contact.connections||[]).map(String).includes(String(c.id));
+        const relLabel=owned?(connMeta[String(c.id)]||"connexion"):"connexion";
+        return{id:c.id,label:c.initials||"?",name:c.first_name,color:C.red,textColor:"#fff",known:true,contactObj:c,relLabel};
+      }),
       ...related.map(r=>({id:r.id,label:r.initials||"?",name:(r.name||"").split(" ")[0],color:r.known?C.red:C.grayLight,textColor:r.known?"#fff":C.gray,known:!!r.known,contactObj:null,relLabel:r.type||"lié"})),
     ];
     const dist=Math.min(W,H)*0.36;
@@ -456,7 +461,7 @@ function ContactNetwork({contact,contacts,onSelect,height=280}){
         ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(n.x,n.y);
         ctx.strokeStyle="rgba(0,0,0,0.07)";ctx.lineWidth=1;ctx.stroke();
         const mx=cx*0.35+n.x*0.65,my=cy*0.35+n.y*0.65;
-        ctx.fillStyle="rgba(0,0,0,0.25)";ctx.font="8px Inter,sans-serif";ctx.textAlign="center";
+        ctx.fillStyle="rgba(0,0,0,0.35)";ctx.font="8px Inter,sans-serif";ctx.textAlign="center";
         ctx.fillText(n.relLabel,mx,my);
       });
       nodesRef.current.forEach(n=>{
@@ -485,7 +490,8 @@ function ContactNetwork({contact,contacts,onSelect,height=280}){
     const hit=nodesRef.current.find(n=>{if(n.isCenter)return false;const dx=n.x-mx,dy=n.y-my;return Math.sqrt(dx*dx+dy*dy)<n.r+10&&n.known&&n.contactObj;});
     if(hit)onSelect(hit.contactObj);
   },[onSelect]);
-  return <canvas ref={canvasRef} onClick={handleClick} style={{width:"100%",height:height+"px",display:"block",cursor:"pointer"}}/>;
+  const canvasStyle=height?{width:"100%",height:height+"px",display:"block",cursor:"pointer"}:{width:"100%",height:"100%",display:"block",cursor:"pointer"};
+  return <canvas ref={canvasRef} onClick={handleClick} style={canvasStyle}/>;
 }
 
 // ── TOILE GLOBALE ──────────────────────────────────────────────────────────────
@@ -661,6 +667,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
   const [photoErr,setPhotoErr]=useState(false);
   const [showActionMenu,setShowActionMenu]=useState(false);
   const [showEditModal,setShowEditModal]=useState(false);
+  const [openRelEditor,setOpenRelEditor]=useState(null);
   const photoRef=useRef(null);
   const score=healthScore(c),hcol=healthColor(score);
   const connSet=connectedIdsOf(c,contacts);
@@ -806,13 +813,38 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
             {(c.related||[]).length===0&&<div style={{fontSize:12,color:C.gray,textAlign:"center",padding:"8px 0"}}>Aucune relation annexe</div>}
           </div>
           <div><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Connexions dans ta base</div>
-            {contacts.filter(x=>connSet.has(String(x.id))).map((r,i)=>(
-              <div key={i} onClick={()=>onSelect(r)} style={{display:"flex",alignItems:"center",gap:8,background:"#F7F7F7",borderRadius:8,padding:"8px 10px",marginBottom:4,cursor:"pointer",border:"1px solid "+C.grayLight}}>
-                <div style={{width:28,height:28,borderRadius:"50%",background:C.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>{r.initials||"?"}</div>
-                <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.black}}>{r.first_name} {r.last_name}</div><div style={{fontSize:10,color:C.gray}}>{r.role}</div></div>
-                <span style={{fontSize:11,color:C.gray}}>→</span>
-              </div>
-            ))}
+            {contacts.filter(x=>connSet.has(String(x.id))).map((r,i)=>{
+              const owned=(c.connections||[]).map(String).includes(String(r.id));
+              const relType=(c.connection_types||{})[String(r.id)]||"";
+              const isOpen=openRelEditor===String(r.id);
+              return(
+                <div key={i} style={{background:"#F7F7F7",borderRadius:8,padding:"8px 10px",marginBottom:4,border:"1px solid "+C.grayLight}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>onSelect(r)}>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:C.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>{r.initials||"?"}</div>
+                    <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.black}}>{r.first_name} {r.last_name}</div><div style={{fontSize:10,color:C.gray}}>{r.role}</div></div>
+                    <span style={{fontSize:11,color:C.gray}}>→</span>
+                  </div>
+                  <div style={{marginTop:6,paddingLeft:36}} onClick={e=>e.stopPropagation()}>
+                    {owned?(
+                      <button onClick={()=>setOpenRelEditor(isOpen?null:String(r.id))} style={{fontSize:9,padding:"3px 9px",borderRadius:10,background:relType?C.red+"12":C.bgSoft,color:relType?C.red:C.gray,border:"1px solid "+(relType?C.redMid:C.grayLight),cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>
+                        {relType||"Définir la relation"} {isOpen?"▲":"▼"}
+                      </button>
+                    ):(
+                      <span style={{fontSize:9,color:C.gray,fontStyle:"italic"}}>connexion entrante — définie depuis la fiche de {r.first_name}</span>
+                    )}
+                    {owned&&isOpen&&(
+                      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
+                        {RELATION_TYPES.map(rt=>{
+                          const active=relType===rt;
+                          const rtBorder="1px solid "+(active?C.red:C.grayLight);
+                          return(<button key={rt} onClick={()=>{onUpdate({connection_types:{...(c.connection_types||{}),[String(r.id)]:rt}});setOpenRelEditor(null);}} style={{padding:"3px 9px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#fff",color:active?"#fff":C.gray,border:rtBorder}}>{rt}</button>);
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
             {contacts.filter(x=>connSet.has(String(x.id))).length===0&&<div style={{fontSize:12,color:C.gray,textAlign:"center",padding:"8px 0"}}>Aucune connexion</div>}
           </div>
           {shouldMeet.length>0&&(<div>
@@ -867,6 +899,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
         <EditContactModal
           contact={c}
           contacts={contacts}
+          existingGroups={[...new Set(contacts.flatMap(x=>x.groups||[]))].sort()}
           onClose={()=>setShowEditModal(false)}
           onSave={async(patch)=>{await onUpdate(patch);setShowEditModal(false);}}
         />
@@ -876,12 +909,16 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
 }
 
 // ── MODAL ÉDITION CONTACT ──────────────────────────────────────────────────────
-function EditContactModal({contact,contacts,onClose,onSave}){
+function EditContactModal({contact,contacts,onClose,onSave,existingGroups}){
   const c=contact;
   const others=contacts.filter(x=>String(x.id)!==String(c.id));
   const [customSectors,setCustomSectors]=useState([]);
   const [newSector,setNewSector]=useState("");
   const [showNewSector,setShowNewSector]=useState(false);
+  const [customGroups,setCustomGroups]=useState([]);
+  const [newGroup,setNewGroup]=useState("");
+  const [showNewGroup,setShowNewGroup]=useState(false);
+  const [connSearch,setConnSearch]=useState("");
   const [saving,setSaving]=useState(false);
   const [tab,setTab]=useState("identite");
   const [photoData,setPhotoData]=useState(c.photo_url||"");
@@ -904,11 +941,14 @@ function EditContactModal({contact,contacts,onClose,onSave}){
     current_desire:c.current_desire||"",red_lines:c.red_lines||"",
     utility_score:c.utility_score??5,sentiment_score:c.sentiment_score??5,reliability_score:c.reliability_score??5,
     known_personally:!!c.known_personally,my_relation:c.my_relation||[],
+    groups:c.groups||[],
     connections:(c.connections||[]).map(String),
+    connection_types:{...(c.connection_types||{})},
   });
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const toggleMulti=(k,v)=>setForm(f=>({...f,[k]:f[k].includes(v)?f[k].filter(x=>x!==v):[...f[k],v]}));
   const allSectors=[...SECTORS_DEFAULT,...customSectors];
+  const allGroups=[...(existingGroups||[]),...customGroups];
 
   const pickPhoto=async(file)=>{
     if(!file)return;
@@ -919,6 +959,7 @@ function EditContactModal({contact,contacts,onClose,onSave}){
   const handleSave=async()=>{
     if(!form.first_name.trim()||!form.last_name.trim())return;
     setSaving(true);
+    const orEmpty=(v)=>v&&v.trim?(v.trim()||null):(v||null);
     const patch={
       genre:form.genre,first_name:form.first_name.trim(),last_name:form.last_name.trim(),
       alias:form.alias,maiden_name:form.maiden_name,
@@ -932,12 +973,14 @@ function EditContactModal({contact,contacts,onClose,onSave}){
       discussion_points:form.discussion_points.split("\n").map(h=>h.trim()).filter(Boolean),
       topics_to_avoid:form.topics_to_avoid.split("\n").map(h=>h.trim()).filter(Boolean),
       notes:form.notes,
-      primary_lever:form.primary_lever,secondary_lever:form.secondary_lever,tertiary_lever:form.tertiary_lever,
-      ego_type:form.ego_type,
+      primary_lever:orEmpty(form.primary_lever),secondary_lever:orEmpty(form.secondary_lever),tertiary_lever:orEmpty(form.tertiary_lever),
+      ego_type:orEmpty(form.ego_type),
       current_desire:form.current_desire,red_lines:form.red_lines,
       utility_score:Number(form.utility_score),sentiment_score:Number(form.sentiment_score),reliability_score:Number(form.reliability_score),
       known_personally:form.known_personally,my_relation:form.my_relation,
+      groups:form.groups,
       connections:form.connections,
+      connection_types:form.connection_types,
       photo_url:photoData,
       initials:(form.first_name[0]||"")+(form.last_name[0]||""),
     };
@@ -1055,6 +1098,24 @@ function EditContactModal({contact,contacts,onClose,onSave}){
               </div>
               {field("Ville","location_city")}
               <div style={{marginBottom:12}}>
+                <label style={lbl}>Groupes / Associations (multi)</label>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                  {allGroups.map(o=>{
+                    const active=form.groups.includes(o);
+                    const gBorder2="1px solid "+(active?C.purple:C.grayLight);
+                    return(<button key={o} onClick={()=>toggleMulti("groups",o)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.purple:"#F7F7F7",color:active?"#fff":C.black,border:gBorder2,transition:"all 0.15s"}}>{o}</button>);
+                  })}
+                  <button onClick={()=>setShowNewGroup(p=>!p)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:"none",color:C.purple,border:"1px dashed "+C.purple}}>+ Créer</button>
+                </div>
+                {showNewGroup&&(
+                  <div style={{display:"flex",gap:6}}>
+                    <input value={newGroup} onChange={e=>setNewGroup(e.target.value)} placeholder="Nom du groupe..." style={{...inp,flex:1}}
+                      onKeyDown={e=>{if(e.key==="Enter"&&newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));setNewGroup("");setShowNewGroup(false);}}}/>
+                    <button onClick={()=>{if(newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));setNewGroup("");setShowNewGroup(false);}}} style={{padding:"10px 14px",background:C.purple,border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
+                  </div>
+                )}
+              </div>
+              <div style={{marginBottom:12}}>
                 <label style={lbl}>Téléphone</label>
                 <div style={{display:"flex",gap:6}}>
                   <select value={form.country_code} onChange={e=>set("country_code",e.target.value)} style={{...inp,width:"auto",flexShrink:0,paddingRight:8,cursor:"pointer"}}>
@@ -1103,17 +1164,42 @@ function EditContactModal({contact,contacts,onClose,onSave}){
 
           {tab==="connexions"&&(
             <div style={{marginBottom:16}}>
-              <div style={{fontSize:11,color:C.gray,lineHeight:1.5,marginBottom:12}}>Gère les connexions de ce contact avec les autres personnes de ta base.</div>
-              {others.length===0&&<div style={{textAlign:"center",padding:20,color:C.gray,fontSize:12,background:"#F7F7F7",borderRadius:10}}>Aucun autre contact dans ta base.</div>}
-              {others.map(ec=>{
+              <div style={{fontSize:11,color:C.gray,lineHeight:1.5,marginBottom:10}}>Gère les connexions de ce contact et le type de relation qui les lie.</div>
+              <div style={{position:"relative",marginBottom:10}}>
+                <span style={{position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",color:C.gray,fontSize:12}}>⌕</span>
+                <input value={connSearch} onChange={e=>setConnSearch(e.target.value)} placeholder="Rechercher un contact..." style={{...inp,paddingLeft:28}}/>
+              </div>
+              {others.filter(ec=>((ec.first_name||"")+" "+(ec.last_name||"")+" "+(ec.company||"")).toLowerCase().includes(connSearch.toLowerCase())).length===0&&(
+                <div style={{textAlign:"center",padding:20,color:C.gray,fontSize:12,background:"#F7F7F7",borderRadius:10}}>Aucun contact correspondant.</div>
+              )}
+              {others.filter(ec=>((ec.first_name||"")+" "+(ec.last_name||"")+" "+(ec.company||"")).toLowerCase().includes(connSearch.toLowerCase())).map(ec=>{
                 const sel=form.connections.includes(String(ec.id));
                 const cardBorder="1px solid "+(sel?"rgba(26,122,74,0.3)":C.grayLight);
                 const btnBorder="1px solid "+(sel?C.green:C.grayLight);
+                const currentType=form.connection_types[String(ec.id)]||"";
                 return(
-                  <div key={ec.id} style={{display:"flex",alignItems:"center",gap:10,background:sel?"#F0FFF6":"#F7F7F7",border:cardBorder,borderRadius:10,padding:"10px 12px",marginBottom:6}}>
-                    <div style={{width:30,height:30,borderRadius:"50%",background:sel?C.green:C.grayLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:sel?"#fff":C.gray,flexShrink:0}}>{ec.initials||"?"}</div>
-                    <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.black}}>{ec.first_name} {ec.last_name}</div><div style={{fontSize:10,color:C.gray}}>{ec.role}</div></div>
-                    <button onClick={()=>set("connections",sel?form.connections.filter(x=>x!==String(ec.id)):[...form.connections,String(ec.id)])} style={{padding:"5px 10px",borderRadius:8,border:btnBorder,background:sel?"rgba(26,122,74,0.1)":"none",color:sel?C.green:C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>{sel?"✓ Lié":"+ Lier"}</button>
+                  <div key={ec.id} style={{background:sel?"#F0FFF6":"#F7F7F7",border:cardBorder,borderRadius:10,padding:"10px 12px",marginBottom:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:sel?8:0}}>
+                      <div style={{width:30,height:30,borderRadius:"50%",background:sel?C.green:C.grayLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:sel?"#fff":C.gray,flexShrink:0}}>{ec.initials||"?"}</div>
+                      <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.black}}>{ec.first_name} {ec.last_name}</div><div style={{fontSize:10,color:C.gray}}>{ec.role}</div></div>
+                      <button onClick={()=>{
+                        if(sel){
+                          set("connections",form.connections.filter(x=>x!==String(ec.id)));
+                          const nt={...form.connection_types};delete nt[String(ec.id)];set("connection_types",nt);
+                        }else{
+                          set("connections",[...form.connections,String(ec.id)]);
+                        }
+                      }} style={{padding:"5px 10px",borderRadius:8,border:btnBorder,background:sel?"rgba(26,122,74,0.1)":"none",color:sel?C.green:C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>{sel?"✓ Lié":"+ Lier"}</button>
+                    </div>
+                    {sel&&(
+                      <div style={{display:"flex",flexWrap:"wrap",gap:5,paddingLeft:40}}>
+                        {RELATION_TYPES.map(rt=>{
+                          const active=currentType===rt;
+                          const rtBorder="1px solid "+(active?C.green:C.grayLight);
+                          return(<button key={rt} onClick={()=>set("connection_types",{...form.connection_types,[String(ec.id)]:rt})} style={{padding:"3px 9px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.green:"#fff",color:active?"#fff":C.gray,border:rtBorder,transition:"all 0.15s"}}>{rt}</button>);
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1144,12 +1230,16 @@ function HexFAB({onClick}){
 }
 
 // ── MODAL NOUVEAU CONTACT (4 étapes) ──────────────────────────────────────────
-function AddContactModal({onClose,onSave,existingContacts}){
+function AddContactModal({onClose,onSave,existingContacts,existingGroups}){
   const list=existingContacts||[];
   const [step,setStep]=useState(1);
   const [customSectors,setCustomSectors]=useState([]);
   const [newSector,setNewSector]=useState("");
   const [showNewSector,setShowNewSector]=useState(false);
+  const [customGroups,setCustomGroups]=useState([]);
+  const [newGroup,setNewGroup]=useState("");
+  const [showNewGroup,setShowNewGroup]=useState(false);
+  const [connSearch,setConnSearch]=useState("");
   const [photoData,setPhotoData]=useState("");
   const photoRef=useRef(null);
   const [form,setForm]=useState({
@@ -1160,12 +1250,13 @@ function AddContactModal({onClose,onSave,existingContacts}){
     primary_lever:"",secondary_lever:"",tertiary_lever:"",ego_type:"",
     current_desire:"",red_lines:"",
     utility_score:5,sentiment_score:5,reliability_score:5,
-    known_personally:true,my_relation:[],
+    known_personally:true,my_relation:[],groups:[],
     selected_connections:[],
   });
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const toggleMulti=(k,v)=>setForm(f=>({...f,[k]:f[k].includes(v)?f[k].filter(x=>x!==v):[...f[k],v]}));
   const allSectors=[...SECTORS_DEFAULT,...customSectors];
+  const allGroups=[...(existingGroups||[]),...customGroups];
   const isStep1Valid=form.first_name.trim()&&form.last_name.trim();
 
   const pickPhoto=async(file)=>{
@@ -1176,17 +1267,25 @@ function AddContactModal({onClose,onSave,existingContacts}){
 
   const handleSave=()=>{
     const {selected_connections,...rest}=form;
+    const orEmpty=(v)=>(v&&v.trim?(v.trim()||null):(v||null));
+    const connection_types={};
+    selected_connections.forEach(sc=>{if(sc.relation_type)connection_types[String(sc.id)]=sc.relation_type;});
     const contact={
       ...rest,
       sector:form.sectors[0]||"",
       photo_url:photoData,
       media:[],
+      primary_lever:orEmpty(form.primary_lever),
+      secondary_lever:orEmpty(form.secondary_lever),
+      tertiary_lever:orEmpty(form.tertiary_lever),
+      ego_type:orEmpty(form.ego_type),
       initials:(form.first_name[0]||"")+(form.last_name[0]||""),
       hobbies:form.hobbies.split(",").map(h=>h.trim()).filter(Boolean),
       discussion_points:form.discussion_points.split("\n").map(h=>h.trim()).filter(Boolean),
       topics_to_avoid:form.topics_to_avoid.split("\n").map(h=>h.trim()).filter(Boolean),
       phone:form.phone?form.country_code+" "+form.phone:"",
       connections:selected_connections.map(x=>x.id),
+      connection_types,
       related:[],interactions:[],reminders:[],tags:[],
       utility_score:Number(form.utility_score),
       sentiment_score:Number(form.sentiment_score),
@@ -1307,6 +1406,24 @@ function AddContactModal({onClose,onSave,existingContacts}){
               </div>
               {field("Ville","location_city","text","Grand Baie")}
               <div style={{marginBottom:12}}>
+                <label style={lbl}>Groupes / Associations (multi)</label>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                  {allGroups.map(o=>{
+                    const active=form.groups.includes(o);
+                    const gBorder2="1px solid "+(active?C.purple:C.grayLight);
+                    return(<button key={o} onClick={()=>toggleMulti("groups",o)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.purple:"#F7F7F7",color:active?"#fff":C.black,border:gBorder2,transition:"all 0.15s"}}>{o}</button>);
+                  })}
+                  <button onClick={()=>setShowNewGroup(p=>!p)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:"none",color:C.purple,border:"1px dashed "+C.purple}}>+ Créer</button>
+                </div>
+                {showNewGroup&&(
+                  <div style={{display:"flex",gap:6}}>
+                    <input value={newGroup} onChange={e=>setNewGroup(e.target.value)} placeholder="Nom du groupe..." style={{...inp,flex:1}}
+                      onKeyDown={e=>{if(e.key==="Enter"&&newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));setNewGroup("");setShowNewGroup(false);}}}/>
+                    <button onClick={()=>{if(newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));setNewGroup("");setShowNewGroup(false);}}} style={{padding:"10px 14px",background:C.purple,border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
+                  </div>
+                )}
+              </div>
+              <div style={{marginBottom:12}}>
                 <label style={lbl}>Téléphone</label>
                 <div style={{display:"flex",gap:6}}>
                   <select value={form.country_code} onChange={e=>set("country_code",e.target.value)} style={{...inp,width:"auto",flexShrink:0,paddingRight:8,cursor:"pointer"}}>
@@ -1372,11 +1489,17 @@ function AddContactModal({onClose,onSave,existingContacts}){
 
           {step===4&&(
             <div style={{marginBottom:16}}>
-              <div style={{fontSize:11,color:C.gray,lineHeight:1.5,marginBottom:12}}>Lie ce contact à des personnes déjà dans ta base, avec le type de relation entre eux.</div>
+              <div style={{fontSize:11,color:C.gray,lineHeight:1.5,marginBottom:10}}>Lie ce contact à des personnes déjà dans ta base, avec le type de relation entre eux.</div>
+              {list.length>0&&(
+                <div style={{position:"relative",marginBottom:10}}>
+                  <span style={{position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",color:C.gray,fontSize:12}}>⌕</span>
+                  <input value={connSearch} onChange={e=>setConnSearch(e.target.value)} placeholder="Rechercher un contact..." style={{...inp,paddingLeft:28}}/>
+                </div>
+              )}
               {list.length===0&&(
                 <div style={{textAlign:"center",padding:20,color:C.gray,fontSize:12,background:"#F7F7F7",borderRadius:10}}>Aucun contact existant pour l'instant.</div>
               )}
-              {list.map(ec=>{
+              {list.filter(ec=>((ec.first_name||"")+" "+(ec.last_name||"")+" "+(ec.company||"")).toLowerCase().includes(connSearch.toLowerCase())).map(ec=>{
                 const sel=form.selected_connections.find(x=>String(x.id)===String(ec.id));
                 const cardBg=sel?"#F0FFF6":"#F7F7F7";
                 const cardBorder=sel?"1px solid rgba(26,122,74,0.3)":"1px solid "+C.grayLight;
@@ -1568,9 +1691,13 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
   const [showAddContact,setShowAddContact]=useState(false);
   const [showAccountMenu,setShowAccountMenu]=useState(false);
   const [activeSection,setActiveSection]=useState(null); // dashboard | filters | tasks | partners | null
-  const [filters,setFilters]=useState({sector:[],primary_lever:[],ego_type:[],known_personally:null,relation:[]});
+  const [filters,setFilters]=useState({sector:[],primary_lever:[],ego_type:[],known_personally:null,relation:[],groups:[]});
   const [partnersSector,setPartnersSector]=useState("");
   const [taskFocus,setTaskFocus]=useState(null);
+  const [showCreateGroup,setShowCreateGroup]=useState(false);
+  const [newGroupName,setNewGroupName]=useState("");
+  const [newGroupIds,setNewGroupIds]=useState([]);
+  const [groupPickerSearch,setGroupPickerSearch]=useState("");
   const windowWidth=useWindowWidth();
   const isMobile=windowWidth<768;
 
@@ -1582,15 +1709,29 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
   const urgentCount=tasks.filter(t=>t.urgent).length;
 
   const allSectorsInData=[...new Set(contacts.flatMap(c=>contactSectors(c)))].sort();
+  const allGroupsInData=[...new Set(contacts.flatMap(c=>c.groups||[]))].sort();
   const opts={
     sector:allSectorsInData,
     primary_lever:[...new Set(contacts.map(c=>c.primary_lever).filter(Boolean))],
     ego_type:[...new Set(contacts.map(c=>c.ego_type).filter(Boolean))],
     relation:[...new Set(contacts.flatMap(c=>c.my_relation||[]))].sort(),
+    groups:allGroupsInData,
   };
   const toggleFilter=(cat,val)=>setFilters(f=>({...f,[cat]:f[cat].includes(val)?f[cat].filter(x=>x!==val):[...f[cat],val]}));
-  const activeFilterCount=filters.sector.length+filters.primary_lever.length+filters.ego_type.length+filters.relation.length+(filters.known_personally!==null?1:0);
-  const clearFilters=()=>setFilters({sector:[],primary_lever:[],ego_type:[],known_personally:null,relation:[]});
+  const activeFilterCount=filters.sector.length+filters.primary_lever.length+filters.ego_type.length+filters.relation.length+filters.groups.length+(filters.known_personally!==null?1:0);
+  const clearFilters=()=>setFilters({sector:[],primary_lever:[],ego_type:[],known_personally:null,relation:[],groups:[]});
+
+  async function handleCreateGroup(){
+    const name=newGroupName.trim();
+    if(!name||newGroupIds.length===0)return;
+    await Promise.all(newGroupIds.map(id=>{
+      const target=contacts.find(c=>String(c.id)===String(id));
+      if(!target)return Promise.resolve();
+      const nextGroups=Array.from(new Set([...(target.groups||[]),name]));
+      return onUpdateContact(id,{groups:nextGroups});
+    }));
+    setNewGroupName("");setNewGroupIds([]);setGroupPickerSearch("");setShowCreateGroup(false);
+  }
 
   let filtered=contacts.filter(c=>{
     const textMatch=((c.first_name||"")+" "+(c.last_name||"")+" "+(c.company||"")+" "+contactSectors(c).join(" ")).toLowerCase().includes(search.toLowerCase());
@@ -1598,8 +1739,9 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
     const leverMatch=filters.primary_lever.length===0||filters.primary_lever.includes(c.primary_lever);
     const egoMatch=filters.ego_type.length===0||filters.ego_type.includes(c.ego_type);
     const relMatch=filters.relation.length===0||(c.my_relation||[]).some(r=>filters.relation.includes(r));
+    const groupMatch=filters.groups.length===0||(c.groups||[]).some(g=>filters.groups.includes(g));
     const knownMatch=filters.known_personally===null||c.known_personally===filters.known_personally;
-    return textMatch&&sectorMatch&&leverMatch&&egoMatch&&relMatch&&knownMatch;
+    return textMatch&&sectorMatch&&leverMatch&&egoMatch&&relMatch&&groupMatch&&knownMatch;
   });
   if(activeSection==="partners"){
     filtered=filtered.filter(c=>(c.my_relation||[]).some(r=>PRO_RELATIONS.includes(r))&&(partnersSector===""||contactSectors(c).includes(partnersSector)));
@@ -1650,6 +1792,33 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
           {checkRow(filters.known_personally===true,"Connu perso",undefined,()=>setFilters(f=>({...f,known_personally:f.known_personally===true?null:true})))}
           {checkRow(filters.known_personally===false,"Indirect",undefined,()=>setFilters(f=>({...f,known_personally:f.known_personally===false?null:false})))}
           {opts.relation.map(v=>checkRow(filters.relation.includes(v),v,contacts.filter(c=>(c.my_relation||[]).includes(v)).length,()=>toggleFilter("relation",v)))}
+        </div>
+        <div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+            <span style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Groupes / Associations</span>
+            <button onClick={()=>setShowCreateGroup(p=>!p)} style={{fontSize:9,color:C.purple,background:"none",border:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:700}}>{showCreateGroup?"× Annuler":"+ Créer"}</button>
+          </div>
+          {opts.groups.map(v=>checkRow(filters.groups.includes(v),v,contacts.filter(c=>(c.groups||[]).includes(v)).length,()=>toggleFilter("groups",v)))}
+          {opts.groups.length===0&&!showCreateGroup&&<div style={{fontSize:10,color:C.gray,marginBottom:4}}>Aucun groupe pour l'instant</div>}
+          {showCreateGroup&&(
+            <div style={{background:"#fff",border:"1px solid "+C.grayLight,borderRadius:10,padding:10,marginTop:6}}>
+              <input value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="Nom du nouveau groupe..." style={{width:"100%",padding:"7px 9px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:7,fontSize:11,outline:"none",fontFamily:"Inter,sans-serif",color:C.black,marginBottom:8}}/>
+              <input value={groupPickerSearch} onChange={e=>setGroupPickerSearch(e.target.value)} placeholder="Rechercher des contacts à ajouter..." style={{width:"100%",padding:"7px 9px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:7,fontSize:11,outline:"none",fontFamily:"Inter,sans-serif",color:C.black,marginBottom:8}}/>
+              <div style={{maxHeight:160,overflowY:"auto",marginBottom:8}}>
+                {contacts.filter(c=>((c.first_name||"")+" "+(c.last_name||"")).toLowerCase().includes(groupPickerSearch.toLowerCase())).map(c=>{
+                  const checked=newGroupIds.includes(String(c.id));
+                  return(
+                    <button key={c.id} onClick={()=>setNewGroupIds(ids=>checked?ids.filter(x=>x!==String(c.id)):[...ids,String(c.id)])} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"4px 6px",borderRadius:6,background:checked?C.purple+"12":"transparent",border:"none",cursor:"pointer",marginBottom:2,textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+                      <div style={{width:11,height:11,borderRadius:3,border:"1.5px solid "+(checked?C.purple:C.grayLight),background:checked?C.purple:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>{checked&&<span style={{color:"#fff",fontSize:7,lineHeight:1}}>✓</span>}</div>
+                      <span style={{fontSize:10,color:checked?C.purple:C.black}}>{c.first_name} {c.last_name}</span>
+                    </button>
+                  );
+                })}
+                {contacts.length===0&&<div style={{fontSize:10,color:C.gray}}>Aucun contact</div>}
+              </div>
+              <button onClick={handleCreateGroup} disabled={!newGroupName.trim()||newGroupIds.length===0} style={{width:"100%",padding:"7px",background:(!newGroupName.trim()||newGroupIds.length===0)?"rgba(106,13,173,0.3)":C.purple,border:"none",borderRadius:7,color:"#fff",fontSize:11,fontWeight:700,cursor:(!newGroupName.trim()||newGroupIds.length===0)?"not-allowed":"pointer",fontFamily:"Inter,sans-serif"}}>Créer le groupe ({newGroupIds.length})</button>
+            </div>
+          )}
         </div>
         {opts.sector.length>0&&(
           <div>
@@ -1897,7 +2066,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
                   <span style={{fontSize:10,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Réseau de {selected.first_name}</span>
                 </div>
                 <div style={{flex:1,overflow:"hidden"}}>
-                  <ContactNetwork contact={selected} contacts={contacts} onSelect={onSelect} height={9999}/>
+                  <ContactNetwork contact={selected} contacts={contacts} onSelect={onSelect}/>
                 </div>
               </div>
               <div style={{width:360,flexShrink:0,overflow:"hidden",display:"flex",flexDirection:"column"}}>
@@ -1909,7 +2078,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
       </div>
 
       {showImport&&<ImportTerminal onClose={()=>setShowImport(false)} onBulkImport={onBulkImport}/>}
-      {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={onSaveContact} existingContacts={contacts}/>}
+      {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={onSaveContact} existingContacts={contacts} existingGroups={allGroupsInData}/>}
       {!showAddContact&&!showImport&&!selected&&<HexFAB onClick={()=>setShowAddContact(true)}/>}
     </div>
   );
@@ -1933,6 +2102,8 @@ function normalizeContact(row){
     tags:row.tags||[],
     media:row.media||[],
     my_relation:row.my_relation||[],
+    groups:row.groups||[],
+    connection_types:row.connection_types||{},
     last_interaction:row.last_interaction||"–",
     genre:row.genre||"M",
     alias:row.alias||"",
