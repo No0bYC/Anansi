@@ -656,9 +656,11 @@ function MediaGallery({contact,onUpdate}){
 }
 
 // ── FICHE CONTACT ──────────────────────────────────────────────────────────────
-function ContactCardContent({contact:c,contacts,onSelect,onUpdate}){
+function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
   const [tab,setTab]=useState("brief");
   const [photoErr,setPhotoErr]=useState(false);
+  const [showActionMenu,setShowActionMenu]=useState(false);
+  const [showEditModal,setShowEditModal]=useState(false);
   const photoRef=useRef(null);
   const score=healthScore(c),hcol=healthColor(score);
   const connSet=connectedIdsOf(c,contacts);
@@ -843,9 +845,287 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate}){
         {tab==="média"&&<MediaGallery contact={c} onUpdate={onUpdate}/>}
       </div>
 
-      <div style={{padding:"10px 16px",borderTop:"1px solid "+C.grayLight,display:"flex",gap:8,flexShrink:0}}>
+      <div style={{padding:"10px 16px",borderTop:"1px solid "+C.grayLight,display:"flex",gap:8,flexShrink:0,position:"relative"}}>
         <button style={{flex:2,padding:10,background:C.red,border:"none",borderRadius:10,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>Contacter</button>
-        <button style={{flex:1,padding:10,background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:10,color:C.black,fontSize:13,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>Modifier</button>
+        <button onClick={()=>setShowActionMenu(p=>!p)} style={{flex:1,padding:10,background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:10,color:C.black,fontSize:13,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>Modifier</button>
+        {showActionMenu&&(
+          <>
+            <div onClick={()=>setShowActionMenu(false)} style={{position:"fixed",inset:0,zIndex:60}}/>
+            <div style={{position:"absolute",right:16,bottom:56,background:C.bg,border:"1px solid "+C.grayLight,borderRadius:12,boxShadow:"0 8px 28px rgba(0,0,0,0.15)",zIndex:61,overflow:"hidden",minWidth:200}}>
+              <button onClick={()=>{setShowActionMenu(false);setShowEditModal(true);}} style={{width:"100%",textAlign:"left",padding:"12px 16px",background:"none",border:"none",cursor:"pointer",fontSize:13,color:C.black,fontFamily:"Inter,sans-serif",display:"flex",alignItems:"center",gap:8,borderBottom:"1px solid "+C.grayLight}}>✎ Modifier les informations</button>
+              <button onClick={()=>{
+                setShowActionMenu(false);
+                if(window.confirm("Supprimer définitivement la carte de "+(c.first_name||"")+" "+(c.last_name||"")+" ? Cette action est irréversible.")){
+                  onDelete&&onDelete();
+                }
+              }} style={{width:"100%",textAlign:"left",padding:"12px 16px",background:"none",border:"none",cursor:"pointer",fontSize:13,color:C.red,fontWeight:600,fontFamily:"Inter,sans-serif",display:"flex",alignItems:"center",gap:8}}>🗑 Supprimer la carte</button>
+            </div>
+          </>
+        )}
+      </div>
+      {showEditModal&&(
+        <EditContactModal
+          contact={c}
+          contacts={contacts}
+          onClose={()=>setShowEditModal(false)}
+          onSave={async(patch)=>{await onUpdate(patch);setShowEditModal(false);}}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── MODAL ÉDITION CONTACT ──────────────────────────────────────────────────────
+function EditContactModal({contact,contacts,onClose,onSave}){
+  const c=contact;
+  const others=contacts.filter(x=>String(x.id)!==String(c.id));
+  const [customSectors,setCustomSectors]=useState([]);
+  const [newSector,setNewSector]=useState("");
+  const [showNewSector,setShowNewSector]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [tab,setTab]=useState("identite");
+  const [photoData,setPhotoData]=useState(c.photo_url||"");
+  const [photoErr,setPhotoErr]=useState(false);
+  const photoRef=useRef(null);
+  const [form,setForm]=useState({
+    genre:c.genre||"M",first_name:c.first_name||"",last_name:c.last_name||"",
+    alias:c.alias||"",maiden_name:c.maiden_name||"",
+    role:c.role||"",company:c.company||"",sectors:contactSectors(c),
+    location_city:c.location_city||"",
+    country_code:c.country_code||"+230",
+    phone:(c.phone||"").replace(c.country_code||"+230","").trim(),
+    email:c.email||"",linkedin:c.linkedin||"",
+    hobbies:(c.hobbies||[]).join(", "),
+    discussion_points:(c.discussion_points||[]).join("\n"),
+    topics_to_avoid:(c.topics_to_avoid||[]).join("\n"),
+    notes:c.notes||"",
+    primary_lever:c.primary_lever||"",secondary_lever:c.secondary_lever||"",tertiary_lever:c.tertiary_lever||"",
+    ego_type:c.ego_type||"",
+    current_desire:c.current_desire||"",red_lines:c.red_lines||"",
+    utility_score:c.utility_score??5,sentiment_score:c.sentiment_score??5,reliability_score:c.reliability_score??5,
+    known_personally:!!c.known_personally,my_relation:c.my_relation||[],
+    connections:(c.connections||[]).map(String),
+  });
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const toggleMulti=(k,v)=>setForm(f=>({...f,[k]:f[k].includes(v)?f[k].filter(x=>x!==v):[...f[k],v]}));
+  const allSectors=[...SECTORS_DEFAULT,...customSectors];
+
+  const pickPhoto=async(file)=>{
+    if(!file)return;
+    const data=await fileToResizedDataURL(file,320,0.82);
+    setPhotoData(data);setPhotoErr(false);
+  };
+
+  const handleSave=async()=>{
+    if(!form.first_name.trim()||!form.last_name.trim())return;
+    setSaving(true);
+    const patch={
+      genre:form.genre,first_name:form.first_name.trim(),last_name:form.last_name.trim(),
+      alias:form.alias,maiden_name:form.maiden_name,
+      role:form.role,company:form.company,
+      sectors:form.sectors,sector:form.sectors[0]||"",
+      location_city:form.location_city,
+      country_code:form.country_code,
+      phone:form.phone?form.country_code+" "+form.phone:"",
+      email:form.email,linkedin:form.linkedin,
+      hobbies:form.hobbies.split(",").map(h=>h.trim()).filter(Boolean),
+      discussion_points:form.discussion_points.split("\n").map(h=>h.trim()).filter(Boolean),
+      topics_to_avoid:form.topics_to_avoid.split("\n").map(h=>h.trim()).filter(Boolean),
+      notes:form.notes,
+      primary_lever:form.primary_lever,secondary_lever:form.secondary_lever,tertiary_lever:form.tertiary_lever,
+      ego_type:form.ego_type,
+      current_desire:form.current_desire,red_lines:form.red_lines,
+      utility_score:Number(form.utility_score),sentiment_score:Number(form.sentiment_score),reliability_score:Number(form.reliability_score),
+      known_personally:form.known_personally,my_relation:form.my_relation,
+      connections:form.connections,
+      photo_url:photoData,
+      initials:(form.first_name[0]||"")+(form.last_name[0]||""),
+    };
+    await onSave(patch);
+    setSaving(false);
+  };
+
+  const inp={width:"100%",padding:"10px 12px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:8,color:C.black,fontSize:13,fontFamily:"Inter,sans-serif",outline:"none",transition:"border-color 0.15s"};
+  const lbl={fontSize:10,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",display:"block",marginBottom:5,fontWeight:600};
+  const field=(l,k,type,ph)=>(
+    <div style={{marginBottom:12}}>
+      <label style={lbl}>{l}</label>
+      <input type={type||"text"} value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={ph||""} style={inp}
+        onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.grayLight}/>
+    </div>
+  );
+  const textarea=(l,k,ph,rows)=>(
+    <div style={{marginBottom:12}}>
+      <label style={lbl}>{l}</label>
+      <textarea value={form[k]} onChange={e=>set(k,e.target.value)} placeholder={ph||""} rows={rows||3}
+        style={{...inp,resize:"vertical"}}
+        onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.grayLight}/>
+    </div>
+  );
+  const chipRow=(l,k,options,multi,exclude)=>(
+    <div style={{marginBottom:12}}>
+      <label style={lbl}>{l}</label>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {options.filter(o=>!(exclude||[]).includes(o)).map(o=>{
+          const active=multi?form[k].includes(o):form[k]===o;
+          const chipBorder="1px solid "+(active?C.red:C.grayLight);
+          return(<button key={o} onClick={()=>multi?toggleMulti(k,o):set(k,form[k]===o?"":o)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#F7F7F7",color:active?"#fff":C.black,border:chipBorder,transition:"all 0.15s"}}>{o}</button>);
+        })}
+      </div>
+    </div>
+  );
+  const scoreSlider=(l,k)=>(
+    <div style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+        <label style={{...lbl,marginBottom:0}}>{l}</label>
+        <span style={{fontSize:13,fontWeight:700,color:healthColor(form[k]*10)}}>{form[k]}</span>
+      </div>
+      <input type="range" min={0} max={10} value={form[k]} onChange={e=>set(k,Number(e.target.value))} style={{width:"100%",accentColor:C.red,cursor:"pointer"}}/>
+    </div>
+  );
+
+  const tabs=[["identite","Identité"],["psyche","Psyché"],["metriques","Métriques"],["connexions","Connexions"]];
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100,backdropFilter:"blur(2px)"}}>
+      <div style={{background:C.bg,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:520,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 40px rgba(0,0,0,0.15)",animation:"slideUp 0.3s cubic-bezier(0.34,1.1,0.64,1)"}}>
+        <style>{"@keyframes slideUp{from{transform:translateY(60px);opacity:0}to{transform:translateY(0);opacity:1}}"}</style>
+        <div style={{padding:"20px 20px 0",flexShrink:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+            <div style={{fontSize:17,fontWeight:800,color:C.black}}>Modifier {c.first_name} {c.last_name}</div>
+            <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,color:C.gray,lineHeight:1,padding:4}}>×</button>
+          </div>
+          <div style={{display:"flex",gap:4,marginBottom:14,overflowX:"auto"}}>
+            {tabs.map(([k,l])=>{
+              const active=tab===k;
+              return(<button key={k} onClick={()=>setTab(k)} style={{padding:"7px 12px",borderRadius:8,border:"none",background:active?C.red:"#F7F7F7",color:active?"#fff":C.gray,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"Inter,sans-serif",whiteSpace:"nowrap"}}>{l}</button>);
+            })}
+          </div>
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"0 20px"}}>
+          {tab==="identite"&&(
+            <>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+                <div onClick={()=>photoRef.current&&photoRef.current.click()} style={{width:56,height:56,borderRadius:"50%",background:photoData?"transparent":C.bgSoft,border:photoData?"2px solid transparent":"2px dashed "+C.grayLight,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",overflow:"hidden",flexShrink:0}}>
+                  {photoData&&!photoErr?<img src={photoData} alt="" onError={()=>setPhotoErr(true)} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{fontSize:18,color:C.gray}}>📷</span>}
+                </div>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:C.black}}>Photo de profil</div>
+                  <div style={{fontSize:10,color:C.gray}}>Cliquer pour changer</div>
+                </div>
+                <input ref={photoRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>pickPhoto(e.target.files[0])}/>
+              </div>
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Genre</label>
+                <div style={{display:"flex",gap:8}}>
+                  {[{v:"M",l:"M."},{v:"F",l:"Mme"}].map(({v,l})=>{
+                    const active=form.genre===v;
+                    const gBorder="1px solid "+(active?C.red:C.grayLight);
+                    return(<button key={v} onClick={()=>set("genre",v)} style={{flex:1,padding:9,borderRadius:8,cursor:"pointer",fontFamily:"Inter,sans-serif",fontSize:13,fontWeight:600,border:gBorder,background:active?C.redSoft:C.bgSoft,color:active?C.red:C.gray,transition:"all 0.15s"}}>{l}</button>);
+                  })}
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <div>{field("Prénom *","first_name")}</div>
+                <div>{field("Nom *","last_name")}</div>
+              </div>
+              {field("Alias / Surnom","alias")}
+              {form.genre==="F"&&field("Nom de jeune fille","maiden_name")}
+              {chipRow("Ma relation avec cette personne (multi)","my_relation",RELATION_TYPES,true)}
+              {field("Poste","role")}
+              {field("Entreprise","company")}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Secteurs (multi)</label>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                  {allSectors.map(o=>{
+                    const active=form.sectors.includes(o);
+                    const sBorder="1px solid "+(active?C.red:C.grayLight);
+                    return(<button key={o} onClick={()=>toggleMulti("sectors",o)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#F7F7F7",color:active?"#fff":C.black,border:sBorder,transition:"all 0.15s"}}>{o}</button>);
+                  })}
+                  <button onClick={()=>setShowNewSector(p=>!p)} style={{padding:"5px 12px",borderRadius:20,fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif",background:"none",color:C.red,border:"1px dashed "+C.red}}>+ Ajouter</button>
+                </div>
+                {showNewSector&&(
+                  <div style={{display:"flex",gap:6}}>
+                    <input value={newSector} onChange={e=>setNewSector(e.target.value)} placeholder="Nouveau secteur..." style={{...inp,flex:1}}
+                      onKeyDown={e=>{if(e.key==="Enter"&&newSector.trim()){const s=newSector.trim();setCustomSectors(p=>[...p,s]);setForm(f=>({...f,sectors:[...f.sectors,s]}));setNewSector("");setShowNewSector(false);}}}/>
+                    <button onClick={()=>{if(newSector.trim()){const s=newSector.trim();setCustomSectors(p=>[...p,s]);setForm(f=>({...f,sectors:[...f.sectors,s]}));setNewSector("");setShowNewSector(false);}}} style={{padding:"10px 14px",background:C.red,border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
+                  </div>
+                )}
+              </div>
+              {field("Ville","location_city")}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Téléphone</label>
+                <div style={{display:"flex",gap:6}}>
+                  <select value={form.country_code} onChange={e=>set("country_code",e.target.value)} style={{...inp,width:"auto",flexShrink:0,paddingRight:8,cursor:"pointer"}}>
+                    {COUNTRY_CODES.map(cc=>(<option key={cc.code} value={cc.code}>{cc.flag} {cc.code}</option>))}
+                  </select>
+                  <input type="tel" value={form.phone} onChange={e=>set("phone",e.target.value)} placeholder="5xxx xxxx" style={inp} onFocus={e=>e.target.style.borderColor=C.red} onBlur={e=>e.target.style.borderColor=C.grayLight}/>
+                </div>
+              </div>
+              {field("Email","email","email")}
+              {field("LinkedIn","linkedin")}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Connu personnellement</label>
+                <div style={{display:"flex",gap:8}}>
+                  {[{v:true,l:"Oui"},{v:false,l:"Non — indirect"}].map(({v,l})=>{
+                    const active=form.known_personally===v;
+                    const kBorder="1px solid "+(active?C.red:C.grayLight);
+                    return(<button key={String(v)} onClick={()=>set("known_personally",v)} style={{flex:1,padding:9,borderRadius:8,cursor:"pointer",fontFamily:"Inter,sans-serif",fontSize:12,fontWeight:500,border:kBorder,background:active?C.redSoft:C.bgSoft,color:active?C.red:C.gray,transition:"all 0.15s"}}>{l}</button>);
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {tab==="psyche"&&(
+            <>
+              {chipRow("Ego dominant","ego_type",EGOS,false)}
+              {chipRow("Levier principal (1º)","primary_lever",LEVERS,false)}
+              {chipRow("Levier secondaire (2º)","secondary_lever",LEVERS,false,[form.primary_lever].filter(Boolean))}
+              {chipRow("Levier tertiaire (3º)","tertiary_lever",LEVERS,false,[form.primary_lever,form.secondary_lever].filter(Boolean))}
+              {field("Désir actuel","current_desire")}
+              {field("Ligne rouge","red_lines")}
+              {textarea("Points de discussion","discussion_points","Un point par ligne...",3)}
+              {textarea("Sujets à éviter","topics_to_avoid","Un sujet par ligne...",2)}
+              {field("Hobbies & Intérêts","hobbies","text","Golf, Voile, Gastronomie (virgules)")}
+              {textarea("Notes personnelles","notes","",3)}
+            </>
+          )}
+
+          {tab==="metriques"&&(
+            <>
+              {scoreSlider("Utilité — Pertinence pour mes objectifs","utility_score")}
+              {scoreSlider("Sentiment — Mon appréciation personnelle","sentiment_score")}
+              {scoreSlider("Fiabilité — Niveau de confiance","reliability_score")}
+            </>
+          )}
+
+          {tab==="connexions"&&(
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:11,color:C.gray,lineHeight:1.5,marginBottom:12}}>Gère les connexions de ce contact avec les autres personnes de ta base.</div>
+              {others.length===0&&<div style={{textAlign:"center",padding:20,color:C.gray,fontSize:12,background:"#F7F7F7",borderRadius:10}}>Aucun autre contact dans ta base.</div>}
+              {others.map(ec=>{
+                const sel=form.connections.includes(String(ec.id));
+                const cardBorder="1px solid "+(sel?"rgba(26,122,74,0.3)":C.grayLight);
+                const btnBorder="1px solid "+(sel?C.green:C.grayLight);
+                return(
+                  <div key={ec.id} style={{display:"flex",alignItems:"center",gap:10,background:sel?"#F0FFF6":"#F7F7F7",border:cardBorder,borderRadius:10,padding:"10px 12px",marginBottom:6}}>
+                    <div style={{width:30,height:30,borderRadius:"50%",background:sel?C.green:C.grayLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:sel?"#fff":C.gray,flexShrink:0}}>{ec.initials||"?"}</div>
+                    <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.black}}>{ec.first_name} {ec.last_name}</div><div style={{fontSize:10,color:C.gray}}>{ec.role}</div></div>
+                    <button onClick={()=>set("connections",sel?form.connections.filter(x=>x!==String(ec.id)):[...form.connections,String(ec.id)])} style={{padding:"5px 10px",borderRadius:8,border:btnBorder,background:sel?"rgba(26,122,74,0.1)":"none",color:sel?C.green:C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>{sel?"✓ Lié":"+ Lier"}</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{height:16}}/>
+        </div>
+
+        <div style={{padding:"12px 20px 28px",borderTop:"1px solid "+C.grayLight,display:"flex",gap:8,flexShrink:0}}>
+          <button onClick={onClose} style={{flex:1,padding:12,background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:12,color:C.black,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>Annuler</button>
+          <button onClick={handleSave} disabled={saving} style={{flex:2,padding:12,background:C.red,border:"none",borderRadius:12,color:"#fff",fontSize:13,fontWeight:700,cursor:saving?"default":"pointer",fontFamily:"Inter,sans-serif",opacity:saving?0.6:1}}>{saving?"Enregistrement...":"✓ Enregistrer les modifications"}</button>
+        </div>
       </div>
     </div>
   );
@@ -1279,7 +1559,7 @@ function DashboardStats({contacts,tasks,onSelectContact}){
 }
 
 // ── DASHBOARD SHELL (sidebar rail + panneaux + logout) ─────────────────────────
-function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkImport,onUpdateContact,onLogout}){
+function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkImport,onUpdateContact,onDeleteContact,onLogout}){
   const [view,setView]=useState("graph");
   const [search,setSearch]=useState("");
   const [notifications,setNotifications]=useState(MOCK_NOTIFICATIONS);
@@ -1607,7 +1887,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
                 <ContactNetwork contact={selected} contacts={contacts} onSelect={onSelect} height={220}/>
               </div>
               <div style={{flex:1}}>
-                <ContactCardContent contact={selected} contacts={contacts} onSelect={onSelect} onUpdate={(patch)=>onUpdateContact(selected.id,patch)}/>
+                <ContactCardContent contact={selected} contacts={contacts} onSelect={onSelect} onUpdate={(patch)=>onUpdateContact(selected.id,patch)} onDelete={()=>onDeleteContact(selected.id)}/>
               </div>
             </div>
           ):(
@@ -1621,7 +1901,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
                 </div>
               </div>
               <div style={{width:360,flexShrink:0,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-                <ContactCardContent contact={selected} contacts={contacts} onSelect={onSelect} onUpdate={(patch)=>onUpdateContact(selected.id,patch)}/>
+                <ContactCardContent contact={selected} contacts={contacts} onSelect={onSelect} onUpdate={(patch)=>onUpdateContact(selected.id,patch)} onDelete={()=>onDeleteContact(selected.id)}/>
               </div>
             </div>
           )}
@@ -1686,9 +1966,17 @@ export default function App(){
   async function loadContacts(){
     setLoading(true);
     try{
-      const {data,error}=await supabase.from("contacts").select("*").order("created_at",{ascending:false});
-      if(error)throw error;
-      setContacts((data||[]).map(normalizeContact));
+      const PAGE=1000;
+      let all=[];
+      let from=0;
+      while(true){
+        const {data,error}=await supabase.from("contacts").select("*").order("created_at",{ascending:false}).range(from,from+PAGE-1);
+        if(error)throw error;
+        all=all.concat(data||[]);
+        if(!data||data.length<PAGE)break;
+        from+=PAGE;
+      }
+      setContacts(all.map(normalizeContact));
       setDbError(null);
     }catch(e){
       console.error("Supabase load error:",e);
@@ -1728,7 +2016,28 @@ export default function App(){
     }
   }
 
+  async function deleteContact(id){
+    try{
+      const {error}=await supabase.from("contacts").delete().eq("id",id);
+      if(error)throw error;
+      // Nettoyer aussi les connexions des autres contacts qui pointaient vers celui-ci
+      const affected=contacts.filter(c=>(c.connections||[]).map(String).includes(String(id)));
+      await Promise.all(affected.map(c=>{
+        const nextConns=(c.connections||[]).filter(cid=>String(cid)!==String(id));
+        return supabase.from("contacts").update({connections:nextConns}).eq("id",c.id);
+      }));
+      setContacts(prev=>prev.filter(c=>String(c.id)!==String(id)).map(c=>({...c,connections:(c.connections||[]).filter(cid=>String(cid)!==String(id))})));
+      setSelected(s=>(s&&String(s.id)===String(id))?null:s);
+      return true;
+    }catch(e){
+      console.error("Supabase delete error:",e);
+      alert("Erreur de suppression: "+((e&&e.message)||"inconnue"));
+      return false;
+    }
+  }
+
   async function bulkImport(items){
+    const CHUNK=500;
     const payload=items.map(item=>{
       const {_ref,_connections_refs,...c}=item;
       return{
@@ -1737,20 +2046,28 @@ export default function App(){
         last_interaction:new Date().toISOString().split("T")[0],
       };
     });
-    const {data,error}=await supabase.from("contacts").insert(payload).select();
-    if(error)throw error;
+    let insertedRows=[];
+    for(let i=0;i<payload.length;i+=CHUNK){
+      const slice=payload.slice(i,i+CHUNK);
+      const {data,error}=await supabase.from("contacts").insert(slice).select();
+      if(error)throw error;
+      insertedRows=insertedRows.concat(data);
+    }
     const refToId={};
-    data.forEach((row,i)=>{const ref=items[i]._ref;if(ref!=null&&ref!=="")refToId[ref]=row.id;});
+    insertedRows.forEach((row,i)=>{const ref=items[i]._ref;if(ref!=null&&ref!=="")refToId[ref]=row.id;});
     const updates=[];
     items.forEach((item,i)=>{
       const refs=item._connections_refs||[];
       if(refs.length===0)return;
       const ids=refs.map(r=>refToId[r]).filter(Boolean);
-      if(ids.length)updates.push(supabase.from("contacts").update({connections:ids}).eq("id",data[i].id));
+      if(ids.length)updates.push({id:insertedRows[i].id,connections:ids});
     });
-    if(updates.length)await Promise.all(updates);
+    for(let i=0;i<updates.length;i+=CHUNK){
+      const slice=updates.slice(i,i+CHUNK);
+      await Promise.all(slice.map(u=>supabase.from("contacts").update({connections:u.connections}).eq("id",u.id)));
+    }
     await loadContacts();
-    return data.length;
+    return insertedRows.length;
   }
 
   function logout(){
@@ -1794,6 +2111,7 @@ export default function App(){
       onSaveContact={saveContact}
       onBulkImport={bulkImport}
       onUpdateContact={updateContact}
+      onDeleteContact={deleteContact}
       onLogout={logout}
     />
   );
