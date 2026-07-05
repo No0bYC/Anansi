@@ -784,6 +784,20 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
           {c.red_lines&&(
             <div style={{background:C.red+"08",border:"1px solid "+C.redMid,borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:9,color:C.red,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3,fontWeight:600}}>Ligne rouge</div><div style={{fontSize:12,color:C.red,lineHeight:1.5}}>{c.red_lines}</div></div>
           )}
+          {(c.web_insights||[]).length>0&&(
+            <div style={{background:"#F0F4FF",border:"1px solid rgba(26,74,138,0.15)",borderRadius:10,padding:"10px 12px"}}>
+              <div style={{fontSize:9,color:C.blue,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:7,fontWeight:600}}>🔎 Sources & recherches (via Anansi bot)</div>
+              {(c.web_insights||[]).map((ins,i)=>(
+                <div key={i} style={{marginBottom:i<(c.web_insights.length-1)?8:0}}>
+                  <div style={{fontSize:12,color:C.blackSoft,lineHeight:1.4}}>{ins.text}</div>
+                  <div style={{display:"flex",gap:6,alignItems:"center",marginTop:2}}>
+                    <span style={{fontSize:9,color:C.gray}}>{ins.date}{ins.source==="internal"?" · trouvé dans une autre fiche":""}</span>
+                    {ins.url&&<a href={ins.url} target="_blank" rel="noreferrer" style={{fontSize:9,color:C.blue,textDecoration:"underline"}}>Source ↗</a>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>)}
 
         {tab==="relation"&&(<div style={{display:"flex",flexDirection:"column",gap:10}}>
@@ -1226,6 +1240,89 @@ function HexFAB({onClick}){
       aria-label="Ajouter un contact">
       <span style={{fontSize:26,color:"#fff",lineHeight:1,fontWeight:300}}>+</span>
     </button>
+  );
+}
+
+// ── CHAT ANANSI (widget flottant — même cerveau que le bot WhatsApp) ──────────
+function ChatWidget(){
+  const [open,setOpen]=useState(false);
+  const [messages,setMessages]=useState([]);
+  const [input,setInput]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [loadedHistory,setLoadedHistory]=useState(false);
+  const scrollRef=useRef(null);
+
+  useEffect(()=>{
+    if(open&&!loadedHistory){
+      setLoadedHistory(true);
+      fetch("/api/chat-history").then(r=>r.json()).then(d=>{
+        if(d&&d.messages)setMessages(d.messages.map(m=>({role:m.role,content:m.content,channel:m.channel})));
+      }).catch(()=>{});
+    }
+  },[open,loadedHistory]);
+
+  useEffect(()=>{
+    if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
+  },[messages,loading]);
+
+  const send=async()=>{
+    const text=input.trim();
+    if(!text||loading)return;
+    setInput("");
+    setMessages(prev=>[...prev,{role:"user",content:text,channel:"app"}]);
+    setLoading(true);
+    try{
+      const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:text})});
+      const data=await res.json();
+      setMessages(prev=>[...prev,{role:"bot",content:data.reply||"(pas de réponse)",channel:"app"}]);
+    }catch(e){
+      setMessages(prev=>[...prev,{role:"bot",content:"Erreur de connexion au bot. Réessaie dans un instant.",channel:"app"}]);
+    }finally{
+      setLoading(false);
+    }
+  };
+
+  return(
+    <>
+      <button onClick={()=>setOpen(p=>!p)} style={{position:"fixed",bottom:24,left:20,width:52,height:52,borderRadius:"50%",background:open?C.black:C.red,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(0,0,0,0.25)",zIndex:30,WebkitTapHighlightColor:"transparent",transition:"background 0.15s"}}
+        aria-label="Chat Anansi">
+        <span style={{fontSize:20,color:"#fff"}}>{open?"×":"💬"}</span>
+      </button>
+
+      {open&&(
+        <div style={{position:"fixed",bottom:86,left:20,width:340,maxWidth:"calc(100vw - 40px)",height:460,maxHeight:"calc(100vh - 140px)",background:C.bg,borderRadius:16,boxShadow:"0 12px 40px rgba(0,0,0,0.2)",border:"1px solid "+C.grayLight,display:"flex",flexDirection:"column",overflow:"hidden",zIndex:31}}>
+          <div style={{padding:"12px 16px",borderBottom:"1px solid "+C.grayLight,display:"flex",alignItems:"center",gap:8,background:C.black}}>
+            <Logo size={22}/>
+            <div>
+              <div style={{fontSize:12,fontWeight:800,color:"#fff"}}>Anansi</div>
+              <div style={{fontSize:9,color:"rgba(255,255,255,0.5)"}}>Assistant CRM — même fil que WhatsApp</div>
+            </div>
+          </div>
+
+          <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
+            {messages.length===0&&!loading&&(
+              <div style={{fontSize:11,color:C.gray,textAlign:"center",marginTop:20,lineHeight:1.6}}>
+                Parle-moi d'un contact ("Arjun cherche un poste à Londres"), ou tape <b>"interview"</b> pour que je te pose des questions et complète ta base petit à petit.
+              </div>
+            )}
+            {messages.map((m,i)=>(
+              <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"85%"}}>
+                <div style={{background:m.role==="user"?C.red:"#F7F7F7",color:m.role==="user"?"#fff":C.black,padding:"8px 12px",borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",fontSize:12,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{m.content}</div>
+                {m.channel==="whatsapp"&&<div style={{fontSize:8,color:C.gray,marginTop:2,textAlign:m.role==="user"?"right":"left"}}>via WhatsApp</div>}
+              </div>
+            ))}
+            {loading&&(
+              <div style={{alignSelf:"flex-start",background:"#F7F7F7",padding:"8px 12px",borderRadius:"14px 14px 14px 4px",fontSize:12,color:C.gray}}>Anansi réfléchit...</div>
+            )}
+          </div>
+
+          <div style={{padding:10,borderTop:"1px solid "+C.grayLight,display:"flex",gap:6}}>
+            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send();}} placeholder="Écris un message..." style={{flex:1,padding:"9px 11px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:20,fontSize:12,outline:"none",fontFamily:"Inter,sans-serif",color:C.black}}/>
+            <button onClick={send} disabled={loading||!input.trim()} style={{width:36,height:36,borderRadius:"50%",background:(loading||!input.trim())?C.grayLight:C.red,border:"none",color:"#fff",fontSize:14,cursor:(loading||!input.trim())?"default":"pointer",flexShrink:0}}>↑</button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -2080,6 +2177,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
       {showImport&&<ImportTerminal onClose={()=>setShowImport(false)} onBulkImport={onBulkImport}/>}
       {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={onSaveContact} existingContacts={contacts} existingGroups={allGroupsInData}/>}
       {!showAddContact&&!showImport&&!selected&&<HexFAB onClick={()=>setShowAddContact(true)}/>}
+      <ChatWidget/>
     </div>
   );
 }
@@ -2104,6 +2202,7 @@ function normalizeContact(row){
     my_relation:row.my_relation||[],
     groups:row.groups||[],
     connection_types:row.connection_types||{},
+    web_insights:row.web_insights||[],
     last_interaction:row.last_interaction||"–",
     genre:row.genre||"M",
     alias:row.alias||"",
