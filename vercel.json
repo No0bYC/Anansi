@@ -1,5 +1,9 @@
 {
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
-  ]
+  ],
+  "functions": {
+    "api/whatsapp.js": { "maxDuration": 60 },
+    "api/chat.js": { "maxDuration": 60 }
+  }
 }
