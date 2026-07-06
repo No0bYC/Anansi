@@ -1,7 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // ANANSI I:R. — Webhook Twilio WhatsApp
 // ═══════════════════════════════════════════════════════════════════════════
-const { processMessage, transcribeAudio, fetchTwilioMedia } = require("./_lib/botCore");
+
+// Chargement défensif : si le module échoue à charger, on le SAIT au lieu de
+// planter silencieusement (FUNCTION_INVOCATION_FAILED sans aucune info).
+let botCore = null;
+let loadError = null;
+try {
+  botCore = require("../lib/botCore");
+} catch (e) {
+  loadError = e && e.stack ? e.stack : String(e);
+}
 
 function escapeXml(str) {
   return String(str || "")
@@ -21,12 +30,10 @@ function digitsOnly(str) {
 }
 
 module.exports = async (req, res) => {
-  // ── DIAGNOSTIC : visite cette URL dans un navigateur (GET) pour vérifier
-  // que les variables d'environnement sont bien présentes côté serveur.
-  // Ne révèle jamais les vraies valeurs des clés, juste leur présence.
   if (req.method === "GET") {
     res.status(200).json({
-      status: "whatsapp webhook actif",
+      status: loadError ? "❌ ERREUR AU CHARGEMENT DU MODULE botCore" : "whatsapp webhook actif",
+      load_error: loadError,
       env_check: {
         SUPABASE_URL: !!process.env.SUPABASE_URL,
         SUPABASE_SERVICE_KEY: !!process.env.SUPABASE_SERVICE_KEY,
@@ -45,24 +52,27 @@ module.exports = async (req, res) => {
     return;
   }
 
+  if (loadError) {
+    res.setHeader("Content-Type", "text/xml");
+    res.status(200).send(xmlReply("Erreur de chargement du module bot : " + loadError));
+    return;
+  }
+
+  const { processMessage, transcribeAudio, fetchTwilioMedia } = botCore;
+
   try {
     const body = req.body || {};
     const from = body.From || "";
-    console.log("From reçu:", from, "| Body:", body.Body, "| NumMedia:", body.NumMedia);
 
     const allowedRaw = process.env.ALLOWED_WHATSAPP_NUMBER;
     if (allowedRaw) {
       const fromDigits = digitsOnly(from);
       const allowedDigits = digitsOnly(allowedRaw);
-      console.log("Comparaison numéro — reçu:", fromDigits, "| autorisé:", allowedDigits);
       if (!allowedDigits || !fromDigits.includes(allowedDigits)) {
-        console.log("⚠️ Numéro non autorisé, message ignoré silencieusement.");
         res.setHeader("Content-Type", "text/xml");
         res.status(200).send("<Response></Response>");
         return;
       }
-    } else {
-      console.log("Aucun ALLOWED_WHATSAPP_NUMBER défini — tous les numéros acceptés.");
     }
 
     let text = (body.Body || "").trim();
@@ -71,11 +81,9 @@ module.exports = async (req, res) => {
     if (numMedia > 0) {
       const mediaUrl = body.MediaUrl0;
       const contentType = body.MediaContentType0 || "";
-      console.log("Média reçu:", contentType, mediaUrl);
       if (contentType.startsWith("audio")) {
         const { buffer, contentType: ct } = await fetchTwilioMedia(mediaUrl);
         text = await transcribeAudio(buffer, ct);
-        console.log("Transcription:", text);
       }
     }
 
@@ -85,10 +93,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    console.log("Appel processMessage avec:", text);
     const reply = await processMessage({ text, channel: "whatsapp" });
-    console.log("Réponse générée:", reply);
-
     res.setHeader("Content-Type", "text/xml");
     res.status(200).send(xmlReply(reply));
   } catch (e) {
