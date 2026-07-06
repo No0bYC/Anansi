@@ -16,16 +16,31 @@ function xmlReply(text) {
   return '<?xml version="1.0" encoding="UTF-8"?><Response><Message>' + escapeXml(text) + "</Message></Response>";
 }
 
-// Compare uniquement les chiffres (tolère espaces, tirets, "whatsapp:", etc.)
 function digitsOnly(str) {
   return String(str || "").replace(/\D/g, "");
 }
 
 module.exports = async (req, res) => {
-  console.log("=== /api/whatsapp appelé ===", new Date().toISOString());
+  // ── DIAGNOSTIC : visite cette URL dans un navigateur (GET) pour vérifier
+  // que les variables d'environnement sont bien présentes côté serveur.
+  // Ne révèle jamais les vraies valeurs des clés, juste leur présence.
+  if (req.method === "GET") {
+    res.status(200).json({
+      status: "whatsapp webhook actif",
+      env_check: {
+        SUPABASE_URL: !!process.env.SUPABASE_URL,
+        SUPABASE_SERVICE_KEY: !!process.env.SUPABASE_SERVICE_KEY,
+        ANTHROPIC_API_KEY: !!process.env.ANTHROPIC_API_KEY,
+        OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
+        TWILIO_ACCOUNT_SID: !!process.env.TWILIO_ACCOUNT_SID,
+        TWILIO_AUTH_TOKEN: !!process.env.TWILIO_AUTH_TOKEN,
+        ALLOWED_WHATSAPP_NUMBER_valeur: process.env.ALLOWED_WHATSAPP_NUMBER || "❌ NON DÉFINIE",
+      },
+    });
+    return;
+  }
 
   if (req.method !== "POST") {
-    console.log("Méthode rejetée:", req.method);
     res.status(405).end();
     return;
   }
@@ -35,20 +50,19 @@ module.exports = async (req, res) => {
     const from = body.From || "";
     console.log("From reçu:", from, "| Body:", body.Body, "| NumMedia:", body.NumMedia);
 
-    // Sécurité : n'accepter que le numéro autorisé (comparaison tolérante, chiffres uniquement)
     const allowedRaw = process.env.ALLOWED_WHATSAPP_NUMBER;
     if (allowedRaw) {
       const fromDigits = digitsOnly(from);
       const allowedDigits = digitsOnly(allowedRaw);
-      console.log("Comparaison numéro — reçu:", fromDigits, "| autorisé (env):", allowedDigits);
-      if (!fromDigits.includes(allowedDigits) || !allowedDigits) {
+      console.log("Comparaison numéro — reçu:", fromDigits, "| autorisé:", allowedDigits);
+      if (!allowedDigits || !fromDigits.includes(allowedDigits)) {
         console.log("⚠️ Numéro non autorisé, message ignoré silencieusement.");
         res.setHeader("Content-Type", "text/xml");
         res.status(200).send("<Response></Response>");
         return;
       }
     } else {
-      console.log("Aucun ALLOWED_WHATSAPP_NUMBER défini — tous les numéros sont acceptés (à corriger).");
+      console.log("Aucun ALLOWED_WHATSAPP_NUMBER défini — tous les numéros acceptés.");
     }
 
     let text = (body.Body || "").trim();
@@ -66,7 +80,6 @@ module.exports = async (req, res) => {
     }
 
     if (!text) {
-      console.log("Texte vide après traitement, réponse par défaut.");
       res.setHeader("Content-Type", "text/xml");
       res.status(200).send(xmlReply("Je n'ai pas compris ce message (vide ou format non supporté). Essaie en texte ou en note vocale."));
       return;
@@ -81,6 +94,6 @@ module.exports = async (req, res) => {
   } catch (e) {
     console.error("❌ ERREUR whatsapp webhook:", e && e.stack ? e.stack : e);
     res.setHeader("Content-Type", "text/xml");
-    res.status(200).send(xmlReply("Anansi a rencontré une erreur technique. Réessaie dans un instant."));
+    res.status(200).send(xmlReply("Anansi a rencontré une erreur technique : " + (e && e.message ? e.message : "inconnue")));
   }
 };
