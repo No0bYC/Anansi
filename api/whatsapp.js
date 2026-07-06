@@ -58,7 +58,7 @@ module.exports = async (req, res) => {
     return;
   }
 
-  const { processMessage, transcribeAudio, fetchTwilioMedia } = botCore;
+  const { processMessage, transcribeAudio, fetchTwilioMedia, sendTwilioMessage, extractMeetingPrepNames, extractEnrichTarget } = botCore;
 
   try {
     const body = req.body || {};
@@ -91,6 +91,18 @@ module.exports = async (req, res) => {
       res.setHeader("Content-Type", "text/xml");
       res.status(200).send(xmlReply("Je n'ai pas compris ce message (vide ou format non supporté). Essaie en texte ou en note vocale."));
       return;
+    }
+
+    // Accusé de réception rapide pour les commandes qui prennent du temps
+    // (recherche web, synthèse multi-contacts) — envoyé via l'API Twilio,
+    // indépendamment de la réponse finale.
+    const isSlowCommand = !!(extractMeetingPrepNames(text) || extractEnrichTarget(text));
+    if (isSlowCommand) {
+      try {
+        await sendTwilioMessage(from, "Je regarde ça, un instant... ⏳");
+      } catch (ackErr) {
+        console.error("Échec envoi accusé de réception:", ackErr);
+      }
     }
 
     const reply = await processMessage({ text, channel: "whatsapp" });
