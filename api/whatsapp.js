@@ -84,6 +84,28 @@ module.exports = async (req, res) => {
       if (contentType.startsWith("audio")) {
         const { buffer, contentType: ct } = await fetchTwilioMedia(mediaUrl);
         text = await transcribeAudio(buffer, ct);
+      } else if (contentType.startsWith("image")) {
+        console.log("Image WhatsApp détectée, content-type:", contentType, "| URL:", mediaUrl);
+        sendTwilioMessage(from, "Je regarde cette image, un instant... 🔎").catch((ackErr) => {
+          console.error("Échec envoi accusé de réception (image):", ackErr);
+        });
+        const { buffer, contentType: ct } = await fetchTwilioMedia(mediaUrl);
+        console.log("Image téléchargée depuis Twilio, taille:", buffer.length, "octets");
+
+        const MAX_BYTES = 8 * 1024 * 1024; // 8 Mo — marge sous la limite Anthropic
+        if (buffer.length > MAX_BYTES) {
+          console.log("Image trop lourde, abandon:", buffer.length, "octets");
+          res.setHeader("Content-Type", "text/xml");
+          res.status(200).send(xmlReply("Cette image est trop lourde pour être analysée. Essaie une photo compressée ou une capture d'écran."));
+          return;
+        }
+
+        const base64 = buffer.toString("base64");
+        const imageReply = await botCore.processImageMessage(base64, ct, body.Body || "", "whatsapp");
+        console.log("processImageMessage terminé, envoi de la réponse.");
+        res.setHeader("Content-Type", "text/xml");
+        res.status(200).send(xmlReply(imageReply));
+        return;
       }
     }
 
