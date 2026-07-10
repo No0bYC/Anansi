@@ -715,7 +715,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
             <div style={{fontSize:14,fontWeight:800,color:C.black,lineHeight:1.2}}>{fullName}</div>
             {myRelation&&<div style={{fontSize:10,color:C.red,marginTop:2,fontWeight:600}}>{myRelation}</div>}
             <div style={{fontSize:11,color:C.gray,marginTop:1}}>{[c.role,c.company].filter(Boolean).join(" · ")}</div>
-            <div style={{fontSize:10,color:C.gray}}>{[c.location_city,sectors.join(" / "),c.last_interaction].filter(Boolean).join(" · ")}</div>
+            <div style={{fontSize:10,color:C.gray}}>{[[c.location_city,c.region,c.country].filter(Boolean).join(", "),sectors.join(" / "),c.last_interaction].filter(Boolean).join(" · ")}</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
@@ -914,6 +914,11 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
           contact={c}
           contacts={contacts}
           existingGroups={[...new Set(contacts.flatMap(x=>x.groups||[]))].sort()}
+          existingCompanies={[...new Set(contacts.map(x=>x.company).filter(Boolean))].sort()}
+          existingCountries={[...new Set(contacts.map(x=>x.country).filter(Boolean))].sort()}
+          existingRegions={[...new Set(contacts.map(x=>x.region).filter(Boolean))].sort()}
+          existingCities={[...new Set(contacts.map(x=>x.location_city).filter(Boolean))].sort()}
+          existingTags={[...new Set(contacts.flatMap(x=>x.tags||[]))].sort()}
           onClose={()=>setShowEditModal(false)}
           onSave={async(patch)=>{await onUpdate(patch);setShowEditModal(false);}}
         />
@@ -923,7 +928,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
 }
 
 // ── MODAL ÉDITION CONTACT ──────────────────────────────────────────────────────
-function EditContactModal({contact,contacts,onClose,onSave,existingGroups}){
+function EditContactModal({contact,contacts,onClose,onSave,existingGroups,existingCompanies,existingCountries,existingRegions,existingCities,existingTags}){
   const c=contact;
   const others=contacts.filter(x=>String(x.id)!==String(c.id));
   const [customSectors,setCustomSectors]=useState([]);
@@ -942,14 +947,14 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups}){
     genre:c.genre||"M",first_name:c.first_name||"",last_name:c.last_name||"",
     alias:c.alias||"",maiden_name:c.maiden_name||"",
     role:c.role||"",company:c.company||"",sectors:contactSectors(c),
-    location_city:c.location_city||"",
+    location_city:c.location_city||"",country:c.country||"",region:c.region||"",
     country_code:c.country_code||"+230",
     phone:(c.phone||"").replace(c.country_code||"+230","").trim(),
     email:c.email||"",linkedin:c.linkedin||"",
     hobbies:(c.hobbies||[]).join(", "),
     discussion_points:(c.discussion_points||[]).join("\n"),
     topics_to_avoid:(c.topics_to_avoid||[]).join("\n"),
-    notes:c.notes||"",
+    notes:c.notes||"",tags:(c.tags||[]).join(", "),
     primary_lever:c.primary_lever||"",secondary_lever:c.secondary_lever||"",tertiary_lever:c.tertiary_lever||"",
     ego_type:c.ego_type||"",
     current_desire:c.current_desire||"",red_lines:c.red_lines||"",
@@ -979,14 +984,14 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups}){
       alias:form.alias,maiden_name:form.maiden_name,
       role:form.role,company:form.company,
       sectors:form.sectors,sector:form.sectors[0]||"",
-      location_city:form.location_city,
+      location_city:form.location_city,country:form.country,region:form.region,
       country_code:form.country_code,
       phone:form.phone?form.country_code+" "+form.phone:"",
       email:form.email,linkedin:form.linkedin,
       hobbies:form.hobbies.split(",").map(h=>h.trim()).filter(Boolean),
       discussion_points:form.discussion_points.split("\n").map(h=>h.trim()).filter(Boolean),
       topics_to_avoid:form.topics_to_avoid.split("\n").map(h=>h.trim()).filter(Boolean),
-      notes:form.notes,
+      notes:form.notes,tags:form.tags.split(",").map(h=>h.trim()).filter(Boolean),
       primary_lever:orEmpty(form.primary_lever),secondary_lever:orEmpty(form.secondary_lever),tertiary_lever:orEmpty(form.tertiary_lever),
       ego_type:orEmpty(form.ego_type),
       current_desire:form.current_desire,red_lines:form.red_lines,
@@ -1091,7 +1096,7 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups}){
               {form.genre==="F"&&field("Nom de jeune fille","maiden_name")}
               {chipRow("Ma relation avec cette personne (multi)","my_relation",RELATION_TYPES,true)}
               {field("Poste","role")}
-              {field("Entreprise","company")}
+              <AutocompleteField label="Entreprise" value={form.company} onChange={v=>set("company",v)} suggestions={existingCompanies||[]} placeholder="Nexus Capital" inp={inp} lbl={lbl}/>
               <div style={{marginBottom:12}}>
                 <label style={lbl}>Secteurs (multi)</label>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
@@ -1110,7 +1115,11 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups}){
                   </div>
                 )}
               </div>
-              {field("Ville","location_city")}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <AutocompleteField label="Pays" value={form.country} onChange={v=>set("country",v)} suggestions={existingCountries||[]} placeholder="Maurice" inp={inp} lbl={lbl}/>
+                <AutocompleteField label="Région" value={form.region} onChange={v=>set("region",v)} suggestions={existingRegions||[]} placeholder="Plaines Wilhems" inp={inp} lbl={lbl}/>
+              </div>
+              <AutocompleteField label="Ville" value={form.location_city} onChange={v=>set("location_city",v)} suggestions={existingCities||[]} placeholder="Grand Baie" inp={inp} lbl={lbl}/>
               <div style={{marginBottom:12}}>
                 <label style={lbl}>Groupes / Associations (multi)</label>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
@@ -1164,6 +1173,20 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups}){
               {textarea("Points de discussion","discussion_points","Un point par ligne...",3)}
               {textarea("Sujets à éviter","topics_to_avoid","Un sujet par ligne...",2)}
               {field("Hobbies & Intérêts","hobbies","text","Golf, Voile, Gastronomie (virgules)")}
+              {field("Tags libres","tags","text","à recontacter, VIP, sportif (virgules)")}
+              {(existingTags||[]).length>0&&(
+                <div style={{marginBottom:12,marginTop:-6}}>
+                  <div style={{fontSize:9,color:C.gray,marginBottom:5}}>Tags existants (clique pour ajouter)</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {(existingTags||[]).map(t=>(
+                      <button key={t} onClick={()=>{
+                        const current=form.tags.split(",").map(s=>s.trim()).filter(Boolean);
+                        if(!current.includes(t))set("tags",[...current,t].join(", "));
+                      }} style={{padding:"3px 9px",borderRadius:20,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",background:"#F7F7F7",color:C.gray,border:"1px solid "+C.grayLight}}>{t}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {textarea("Notes personnelles","notes","",3)}
             </>
           )}
@@ -1326,8 +1349,38 @@ function ChatWidget(){
   );
 }
 
+// ── CHAMP AVEC AUTOCOMPLÉTION (ex: Entreprise) ─────────────────────────────────
+function AutocompleteField({label,value,onChange,suggestions,placeholder,inp,lbl}){
+  const [open,setOpen]=useState(false);
+  const filtered=value.trim()
+    ?(suggestions||[]).filter(s=>s.toLowerCase().includes(value.trim().toLowerCase())&&s.toLowerCase()!==value.trim().toLowerCase())
+    :[];
+  return(
+    <div style={{marginBottom:12,position:"relative"}}>
+      <label style={lbl}>{label}</label>
+      <input
+        value={value}
+        onChange={e=>{onChange(e.target.value);setOpen(true);}}
+        onFocus={()=>setOpen(true)}
+        onBlur={()=>setTimeout(()=>setOpen(false),150)}
+        placeholder={placeholder||""}
+        style={inp}
+      />
+      {open&&filtered.length>0&&(
+        <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#fff",border:"1px solid "+C.grayLight,borderRadius:8,marginTop:4,zIndex:30,maxHeight:160,overflowY:"auto",boxShadow:"0 6px 18px rgba(0,0,0,0.12)"}}>
+          {filtered.slice(0,6).map(s=>(
+            <button key={s} onMouseDown={()=>{onChange(s);setOpen(false);}} style={{display:"flex",alignItems:"center",gap:6,width:"100%",textAlign:"left",padding:"8px 12px",background:"none",border:"none",cursor:"pointer",fontSize:12,color:C.black,fontFamily:"Inter,sans-serif"}}>
+              <span style={{color:C.gray,fontSize:11}}>🏢</span>{s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MODAL NOUVEAU CONTACT (4 étapes) ──────────────────────────────────────────
-function AddContactModal({onClose,onSave,existingContacts,existingGroups}){
+function AddContactModal({onClose,onSave,existingContacts,existingGroups,existingCompanies,existingCountries,existingRegions,existingCities,existingTags}){
   const list=existingContacts||[];
   const [step,setStep]=useState(1);
   const [customSectors,setCustomSectors]=useState([]);
@@ -1341,9 +1394,9 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups}){
   const photoRef=useRef(null);
   const [form,setForm]=useState({
     genre:"M",first_name:"",last_name:"",alias:"",maiden_name:"",
-    role:"",company:"",sectors:[],location_city:"",
+    role:"",company:"",sectors:[],location_city:"",country:"",region:"",
     country_code:"+230",phone:"",email:"",linkedin:"",
-    hobbies:"",discussion_points:"",topics_to_avoid:"",notes:"",
+    hobbies:"",discussion_points:"",topics_to_avoid:"",notes:"",tags:"",
     primary_lever:"",secondary_lever:"",tertiary_lever:"",ego_type:"",
     current_desire:"",red_lines:"",
     utility_score:5,sentiment_score:5,reliability_score:5,
@@ -1383,7 +1436,7 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups}){
       phone:form.phone?form.country_code+" "+form.phone:"",
       connections:selected_connections.map(x=>x.id),
       connection_types,
-      related:[],interactions:[],reminders:[],tags:[],
+      related:[],interactions:[],reminders:[],tags:form.tags.split(",").map(h=>h.trim()).filter(Boolean),
       utility_score:Number(form.utility_score),
       sentiment_score:Number(form.sentiment_score),
       reliability_score:Number(form.reliability_score),
@@ -1482,7 +1535,7 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups}){
               {form.genre==="F"&&field("Nom de jeune fille","maiden_name","text","Nom de naissance")}
               {chipRow("Ma relation avec cette personne (multi)","my_relation",RELATION_TYPES,true)}
               {field("Poste","role","text","CEO")}
-              {field("Entreprise","company","text","Nexus Capital")}
+              <AutocompleteField label="Entreprise" value={form.company} onChange={v=>set("company",v)} suggestions={(existingCompanies||[]).filter(c=>c!==contact.company)} placeholder="Nexus Capital" inp={inp} lbl={lbl}/>
               <div style={{marginBottom:12}}>
                 <label style={lbl}>Secteurs (multi)</label>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
@@ -1501,7 +1554,11 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups}){
                   </div>
                 )}
               </div>
-              {field("Ville","location_city","text","Grand Baie")}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <AutocompleteField label="Pays" value={form.country} onChange={v=>set("country",v)} suggestions={(existingCountries||[]).filter(x=>x!==c.country)} placeholder="Maurice" inp={inp} lbl={lbl}/>
+                <AutocompleteField label="Région" value={form.region} onChange={v=>set("region",v)} suggestions={(existingRegions||[]).filter(x=>x!==c.region)} placeholder="Plaines Wilhems" inp={inp} lbl={lbl}/>
+              </div>
+              <AutocompleteField label="Ville" value={form.location_city} onChange={v=>set("location_city",v)} suggestions={(existingCities||[]).filter(x=>x!==c.location_city)} placeholder="Grand Baie" inp={inp} lbl={lbl}/>
               <div style={{marginBottom:12}}>
                 <label style={lbl}>Groupes / Associations (multi)</label>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
@@ -1555,6 +1612,20 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups}){
               {textarea("Points de discussion","discussion_points","Un point par ligne...",3)}
               {textarea("Sujets à éviter","topics_to_avoid","Un sujet par ligne...",2)}
               {field("Hobbies & Intérêts","hobbies","text","Golf, Voile, Gastronomie (virgules)")}
+              {field("Tags libres","tags","text","à recontacter, VIP, sportif (virgules)")}
+              {(existingTags||[]).length>0&&(
+                <div style={{marginBottom:12,marginTop:-6}}>
+                  <div style={{fontSize:9,color:C.gray,marginBottom:5}}>Tags existants (clique pour ajouter)</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {(existingTags||[]).map(t=>(
+                      <button key={t} onClick={()=>{
+                        const current=form.tags.split(",").map(s=>s.trim()).filter(Boolean);
+                        if(!current.includes(t))set("tags",[...current,t].join(", "));
+                      }} style={{padding:"3px 9px",borderRadius:20,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",background:"#F7F7F7",color:C.gray,border:"1px solid "+C.grayLight}}>{t}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {textarea("Notes personnelles","notes","Contexte, observations...",3)}
             </>
           )}
@@ -1788,7 +1859,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
   const [showAddContact,setShowAddContact]=useState(false);
   const [showAccountMenu,setShowAccountMenu]=useState(false);
   const [activeSection,setActiveSection]=useState(null); // dashboard | filters | tasks | partners | null
-  const [filters,setFilters]=useState({sector:[],primary_lever:[],ego_type:[],known_personally:null,relation:[],groups:[]});
+  const [filters,setFilters]=useState({sector:[],primary_lever:[],ego_type:[],known_personally:null,relation:[],groups:[],company:[],lastName:[],hobbies:[],country:[],region:[],city:[],tags:[]});
   const [partnersSector,setPartnersSector]=useState("");
   const [taskFocus,setTaskFocus]=useState(null);
   const [showCreateGroup,setShowCreateGroup]=useState(false);
@@ -1807,16 +1878,28 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
 
   const allSectorsInData=[...new Set(contacts.flatMap(c=>contactSectors(c)))].sort();
   const allGroupsInData=[...new Set(contacts.flatMap(c=>c.groups||[]))].sort();
+  const allCompaniesInData=[...new Set(contacts.map(c=>c.company).filter(Boolean))].sort();
+  const allCountriesInData=[...new Set(contacts.map(c=>c.country).filter(Boolean))].sort();
+  const allRegionsInData=[...new Set(contacts.map(c=>c.region).filter(Boolean))].sort();
+  const allCitiesInData=[...new Set(contacts.map(c=>c.location_city).filter(Boolean))].sort();
+  const allTagsInData=[...new Set(contacts.flatMap(c=>c.tags||[]))].sort();
   const opts={
     sector:allSectorsInData,
     primary_lever:[...new Set(contacts.map(c=>c.primary_lever).filter(Boolean))],
     ego_type:[...new Set(contacts.map(c=>c.ego_type).filter(Boolean))],
     relation:[...new Set(contacts.flatMap(c=>c.my_relation||[]))].sort(),
     groups:allGroupsInData,
+    company:allCompaniesInData,
+    lastName:[...new Set(contacts.map(c=>c.last_name).filter(Boolean))].sort(),
+    hobbies:[...new Set(contacts.flatMap(c=>c.hobbies||[]))].sort(),
+    country:allCountriesInData,
+    region:allRegionsInData,
+    city:allCitiesInData,
+    tags:allTagsInData,
   };
   const toggleFilter=(cat,val)=>setFilters(f=>({...f,[cat]:f[cat].includes(val)?f[cat].filter(x=>x!==val):[...f[cat],val]}));
-  const activeFilterCount=filters.sector.length+filters.primary_lever.length+filters.ego_type.length+filters.relation.length+filters.groups.length+(filters.known_personally!==null?1:0);
-  const clearFilters=()=>setFilters({sector:[],primary_lever:[],ego_type:[],known_personally:null,relation:[],groups:[]});
+  const activeFilterCount=filters.sector.length+filters.primary_lever.length+filters.ego_type.length+filters.relation.length+filters.groups.length+filters.company.length+filters.lastName.length+filters.hobbies.length+filters.country.length+filters.region.length+filters.city.length+filters.tags.length+(filters.known_personally!==null?1:0);
+  const clearFilters=()=>setFilters({sector:[],primary_lever:[],ego_type:[],known_personally:null,relation:[],groups:[],company:[],lastName:[],hobbies:[],country:[],region:[],city:[],tags:[]});
 
   async function handleCreateGroup(){
     const name=newGroupName.trim();
@@ -1837,8 +1920,15 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
     const egoMatch=filters.ego_type.length===0||filters.ego_type.includes(c.ego_type);
     const relMatch=filters.relation.length===0||(c.my_relation||[]).some(r=>filters.relation.includes(r));
     const groupMatch=filters.groups.length===0||(c.groups||[]).some(g=>filters.groups.includes(g));
+    const companyMatch=filters.company.length===0||filters.company.includes(c.company);
+    const lastNameMatch=filters.lastName.length===0||filters.lastName.includes(c.last_name);
+    const hobbiesMatch=filters.hobbies.length===0||(c.hobbies||[]).some(h=>filters.hobbies.includes(h));
+    const countryMatch=filters.country.length===0||filters.country.includes(c.country);
+    const regionMatch=filters.region.length===0||filters.region.includes(c.region);
+    const cityMatch=filters.city.length===0||filters.city.includes(c.location_city);
+    const tagsMatch=filters.tags.length===0||(c.tags||[]).some(t=>filters.tags.includes(t));
     const knownMatch=filters.known_personally===null||c.known_personally===filters.known_personally;
-    return textMatch&&sectorMatch&&leverMatch&&egoMatch&&relMatch&&groupMatch&&knownMatch;
+    return textMatch&&sectorMatch&&leverMatch&&egoMatch&&relMatch&&groupMatch&&companyMatch&&lastNameMatch&&hobbiesMatch&&countryMatch&&regionMatch&&cityMatch&&tagsMatch&&knownMatch;
   });
   if(activeSection==="partners"){
     filtered=filtered.filter(c=>(c.my_relation||[]).some(r=>PRO_RELATIONS.includes(r))&&(partnersSector===""||contactSectors(c).includes(partnersSector)));
@@ -1917,6 +2007,48 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
             </div>
           )}
         </div>
+        {opts.company.length>0&&(
+          <div>
+            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Entreprise</div>
+            {opts.company.map(v=>checkRow(filters.company.includes(v),v,contacts.filter(c=>c.company===v).length,()=>toggleFilter("company",v)))}
+          </div>
+        )}
+        {opts.lastName.length>0&&(
+          <div>
+            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Famille (nom)</div>
+            {opts.lastName.map(v=>checkRow(filters.lastName.includes(v),v,contacts.filter(c=>c.last_name===v).length,()=>toggleFilter("lastName",v)))}
+          </div>
+        )}
+        {opts.hobbies.length>0&&(
+          <div>
+            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Intérêts</div>
+            {opts.hobbies.map(v=>checkRow(filters.hobbies.includes(v),v,contacts.filter(c=>(c.hobbies||[]).includes(v)).length,()=>toggleFilter("hobbies",v)))}
+          </div>
+        )}
+        {opts.country.length>0&&(
+          <div>
+            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Pays</div>
+            {opts.country.map(v=>checkRow(filters.country.includes(v),v,contacts.filter(c=>c.country===v).length,()=>toggleFilter("country",v)))}
+          </div>
+        )}
+        {opts.region.length>0&&(
+          <div>
+            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Région</div>
+            {opts.region.map(v=>checkRow(filters.region.includes(v),v,contacts.filter(c=>c.region===v).length,()=>toggleFilter("region",v)))}
+          </div>
+        )}
+        {opts.city.length>0&&(
+          <div>
+            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Ville</div>
+            {opts.city.map(v=>checkRow(filters.city.includes(v),v,contacts.filter(c=>c.location_city===v).length,()=>toggleFilter("city",v)))}
+          </div>
+        )}
+        {opts.tags.length>0&&(
+          <div>
+            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Tags</div>
+            {opts.tags.map(v=>checkRow(filters.tags.includes(v),v,contacts.filter(c=>(c.tags||[]).includes(v)).length,()=>toggleFilter("tags",v)))}
+          </div>
+        )}
         {opts.sector.length>0&&(
           <div>
             <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Secteur</div>
@@ -2175,7 +2307,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
       </div>
 
       {showImport&&<ImportTerminal onClose={()=>setShowImport(false)} onBulkImport={onBulkImport}/>}
-      {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={onSaveContact} existingContacts={contacts} existingGroups={allGroupsInData}/>}
+      {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={onSaveContact} existingContacts={contacts} existingGroups={allGroupsInData} existingCompanies={allCompaniesInData} existingCountries={allCountriesInData} existingRegions={allRegionsInData} existingCities={allCitiesInData} existingTags={allTagsInData}/>}
       {!showAddContact&&!showImport&&!selected&&<HexFAB onClick={()=>setShowAddContact(true)}/>}
       <ChatWidget/>
     </div>
@@ -2208,6 +2340,9 @@ function normalizeContact(row){
     alias:row.alias||"",
     maiden_name:row.maiden_name||"",
     photo_url:row.photo_url||"",
+    country:row.country||"",
+    region:row.region||"",
+    location_city:row.location_city||"",
     country_code:row.country_code||"+230",
     secondary_lever:row.secondary_lever||"",
     tertiary_lever:row.tertiary_lever||"",
