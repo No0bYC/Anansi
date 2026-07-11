@@ -32,6 +32,33 @@ const MOCK_NOTIFICATIONS=[
 
 function healthScore(c){return Math.round(((c.sentiment_score??5)+(c.reliability_score??5)+(c.reciprocity_score??5)+(c.momentum_score??5))*10/4);}
 function healthColor(s){return s>=70?C.green:s>=50?C.amber:s>=30?"#CC5500":C.red;}
+
+// Hiérarchie de proximité relationnelle — famille plus proche que collègues, etc.
+// Sert à organiser la toile en cercles concentriques plutôt qu'en distribution uniforme.
+const RELATION_CLOSENESS={
+  "Famille":100,"Ami(e)":85,"Partenaire":75,"Mentor":72,"Mentee":68,
+  "Collègue":55,"Voisin":50,"Investisseur":45,"Client":40,"Fournisseur":35,
+  "Connaissance":25,"Concurrent":15,
+};
+function closenessScore(c){
+  if(!c.known_personally)return 5;
+  const relations=c.my_relation||[];
+  const relBase=relations.length?Math.max(...relations.map(r=>RELATION_CLOSENESS[r]??35)):20;
+  const trust=(c.reliability_score??5)*10;
+  const sentiment=(c.sentiment_score??5)*10;
+  const momentum=(c.momentum_score??5)*10;
+  const groupBonus=Math.min((c.groups||[]).length*5,20);
+  const modifier=(trust+sentiment+momentum)/3*0.3+groupBonus*0.7;
+  return Math.max(0,Math.min(100,relBase*0.85+modifier*0.15));
+}
+// Rayon cible (0-1, fraction du rayon max du canvas) selon le score de proximité
+function ringRadiusFraction(score){
+  if(score>=75)return 0.26; // cercle proche
+  if(score>=50)return 0.52; // cercle régulier
+  if(score>=25)return 0.78; // cercle élargi
+  return 1.0; // périphérie
+}
+const RING_LABELS=[{max:100,min:75,label:"Proche"},{max:75,min:50,label:"Régulier"},{max:50,min:25,label:"Élargi"},{max:25,min:0,label:"Périphérie"}];
 function seededRand(seed){let s=seed%2147483647;if(s<=0)s+=2147483646;s=s*16807%2147483647;return(s-1)/2147483646;}
 function idSeed(id,i){if(typeof id==="number")return id;const str=String(id||i+1);let h=0;for(let k=0;k<str.length;k++){h=(h*31+str.charCodeAt(k))|0;}return Math.abs(h)||i+1;}
 function contactSectors(c){if(Array.isArray(c.sectors)&&c.sectors.length)return c.sectors;return c.sector?[c.sector]:[];}
@@ -442,21 +469,29 @@ function ContactNetwork({contact,contacts,onSelect,height}){
     const outer=[
       ...connectedContacts.map(c=>{
         const owned=(contact.connections||[]).map(String).includes(String(c.id));
-        const relLabel=owned?(connMeta[String(c.id)]||"connexion"):"connexion";
-        return{id:c.id,label:c.initials||"?",name:c.first_name,color:C.red,textColor:"#fff",known:true,contactObj:c,relLabel};
+        const relType=owned?connMeta[String(c.id)]:null;
+        const relLabel=relType||"connexion";
+        return{id:c.id,label:c.initials||"?",name:c.first_name,color:C.red,textColor:"#fff",known:true,contactObj:c,relLabel,closeness:relType?(RELATION_CLOSENESS[relType]??35):20};
       }),
-      ...related.map(r=>({id:r.id,label:r.initials||"?",name:(r.name||"").split(" ")[0],color:r.known?C.red:C.grayLight,textColor:r.known?"#fff":C.gray,known:!!r.known,contactObj:null,relLabel:r.type||"lié"})),
+      ...related.map(r=>({id:r.id,label:r.initials||"?",name:(r.name||"").split(" ")[0],color:r.known?C.red:C.grayLight,textColor:r.known?"#fff":C.gray,known:!!r.known,contactObj:null,relLabel:r.type||"lié",closeness:r.type?(RELATION_CLOSENESS[r.type]??35):20})),
     ];
-    const dist=Math.min(W,H)*0.36;
+    const maxDist=Math.min(W,H)*0.42;
     nodesRef.current=[
       {id:contact.id,x:cx,y:cy,r:26,label:contact.initials||"?",name:contact.first_name,isCenter:true,color:C.red,textColor:"#fff"},
       ...outer.map((item,i)=>{
+        const dist=ringRadiusFraction(item.closeness)*maxDist;
         const a=(i/Math.max(outer.length,1))*Math.PI*2-Math.PI/2;
         return{...item,x:cx+dist*Math.cos(a),y:cy+dist*Math.sin(a),r:18,isCenter:false};
       })
     ];
     const loop=()=>{
       ctx.clearRect(0,0,W,H);
+      // Cercles-guides de proximité
+      RING_LABELS.forEach((ring)=>{
+        const rr=ringRadiusFraction(ring.min+0.1)*maxDist;
+        ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);
+        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1;ctx.setLineDash([3,4]);ctx.stroke();ctx.setLineDash([]);
+      });
       nodesRef.current.slice(1).forEach(n=>{
         ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(n.x,n.y);
         ctx.strokeStyle="rgba(0,0,0,0.07)";ctx.lineWidth=1;ctx.stroke();
@@ -505,13 +540,15 @@ function NetworkGraph({contacts,onSelect,highlightId}){
     const canvas=canvasRef.current;if(!canvas)return;
     const W=canvas.offsetWidth,H=canvas.offsetHeight;
     canvas.width=W;canvas.height=H;
-    const cx=W/2,cy=H/2,r=Math.min(W,H)*0.32;
+    const cx=W/2,cy=H/2,maxR=Math.min(W,H)*0.44;
     nodesRef.current=contacts.map((c,i)=>{
+      const score=closenessScore(c);
+      const targetRadius=ringRadiusFraction(score)*maxR;
       const a=(i/Math.max(contacts.length,1))*Math.PI*2-Math.PI/2;
       const seed=idSeed(c.id,i);
-      const jx=(seededRand(seed*3)-0.5)*28;
-      const jy=(seededRand(seed*7+1)-0.5)*28;
-      return{id:c.id,contact:c,x:cx+r*Math.cos(a)+jx,y:cy+r*Math.sin(a)+jy,vx:0,vy:0,r:(c.utility_score??5)>=9?26:(c.utility_score??5)>=7?21:17};
+      const jx=(seededRand(seed*3)-0.5)*16;
+      const jy=(seededRand(seed*7+1)-0.5)*16;
+      return{id:c.id,contact:c,closeness:score,targetRadius,x:cx+targetRadius*Math.cos(a)+jx,y:cy+targetRadius*Math.sin(a)+jy,vx:0,vy:0,r:(c.utility_score??5)>=9?26:(c.utility_score??5)>=7?21:17};
     });
     const idset=new Set(contacts.map(c=>String(c.id)));
     const seen=new Set();
@@ -528,21 +565,35 @@ function NetworkGraph({contacts,onSelect,highlightId}){
     let frame=0;
     const loop=()=>{
       const ctx=canvas.getContext("2d");ctx.clearRect(0,0,W,H);
-      if(frame<80){
+
+      // Cercles-guides de proximité
+      RING_LABELS.forEach((ring)=>{
+        const rr=ringRadiusFraction(ring.min+0.1)*maxR;
+        ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);
+        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1;ctx.setLineDash([3,4]);ctx.stroke();ctx.setLineDash([]);
+      });
+
+      if(frame<100){
         const nodes=nodesRef.current;
         for(let i=0;i<nodes.length;i++){
           for(let j=i+1;j<nodes.length;j++){
             const dx=nodes[j].x-nodes[i].x,dy=nodes[j].y-nodes[i].y;
-            const d=Math.sqrt(dx*dx+dy*dy)||1,f=2500/(d*d);
+            const d=Math.sqrt(dx*dx+dy*dy)||1,f=1800/(d*d);
             nodes[i].vx-=f*dx/d;nodes[i].vy-=f*dy/d;
             nodes[j].vx+=f*dx/d;nodes[j].vy+=f*dy/d;
           }
-          nodes[i].vx+=(cx-nodes[i].x)*0.004;
-          nodes[i].vy+=(cy-nodes[i].y)*0.004;
+          // Force de rappel radiale : chaque nœud est tiré vers le rayon de SON cercle
+          // de proximité (l'angle reste libre, seule la distance au centre est contrainte).
+          const n=nodes[i];
+          const dxc=n.x-cx,dyc=n.y-cy;
+          const dist=Math.sqrt(dxc*dxc+dyc*dyc)||1;
+          const radial=(n.targetRadius-dist)*0.08;
+          n.vx+=(dxc/dist)*radial;
+          n.vy+=(dyc/dist)*radial;
         }
         edges.forEach(([a,b])=>{
           const na=getN(a),nb=getN(b);if(!na||!nb)return;
-          const dx=nb.x-na.x,dy=nb.y-na.y,d=Math.sqrt(dx*dx+dy*dy)||1,f=(d-120)*0.02;
+          const dx=nb.x-na.x,dy=nb.y-na.y,d=Math.sqrt(dx*dx+dy*dy)||1,f=(d-110)*0.008;
           na.vx+=f*dx/d;na.vy+=f*dy/d;nb.vx-=f*dx/d;nb.vy-=f*dy/d;
         });
         nodes.forEach(n=>{
@@ -550,7 +601,7 @@ function NetworkGraph({contacts,onSelect,highlightId}){
           n.x=Math.max(n.r+8,Math.min(W-n.r-8,n.x));
           n.y=Math.max(n.r+8,Math.min(H-n.r-8,n.y));
         });
-        if(frame===79)nodes.forEach(n=>{n.vx=0;n.vy=0;});
+        if(frame===99)nodes.forEach(n=>{n.vx=0;n.vy=0;});
         frame++;
       }
       edgesRef.current.forEach(([a,b])=>{
@@ -750,6 +801,9 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
           )}
           {(c.hobbies||[]).length>0&&(
             <div><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>Intérêts</div><div>{(c.hobbies||[]).map(h=><Tag key={h}>{h}</Tag>)}</div></div>
+          )}
+          {(c.tags||[]).length>0&&(
+            <div><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontWeight:600}}>Tags</div><div>{(c.tags||[]).map(t=><span key={t} style={{display:"inline-flex",padding:"3px 8px",borderRadius:20,fontSize:11,fontWeight:500,background:C.purple+"12",color:C.purple,margin:2}}>#{t}</span>)}</div></div>
           )}
           {c.notes&&(
             <div style={{background:"#F7F7F7",borderRadius:10,padding:"10px 12px"}}><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontWeight:600}}>Note</div><div style={{fontSize:12,color:C.blackSoft,lineHeight:1.6}}>{c.notes}</div></div>
