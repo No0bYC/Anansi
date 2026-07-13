@@ -16,7 +16,14 @@ const LEVER_CONFIG={statut:{icon:"👑",desc:"Reconnaître sa valeur publiquemen
 const LEVERS=["statut","réciprocité","appartenance","intérêt","cohérence"];
 const EGOS=["faire","avoir","être perçu"];
 const RELATION_TYPES=["Famille","Ami(e)","Collègue","Partenaire","Connaissance","Voisin","Mentor","Mentee","Client","Fournisseur","Investisseur","Concurrent"];
+const FAMILY_SUBTYPES=["Parent","Époux/se","Enfant","Frère","Sœur","Oncle","Tante","Cousin","Autre"];
 const PRO_RELATIONS=["Collègue","Partenaire","Client","Fournisseur","Investisseur","Mentor","Mentee","Concurrent"];
+const GROUP_TYPES=["Business","Spiritualité","Sport","Hobby","Famille","Autre"];
+const GROUP_TYPE_COLOR={Business:C.blue,"Spiritualité":C.purple,Sport:C.green,Hobby:C.amber,Famille:C.red,Autre:C.gray};
+// Type de groupe -> type de relation appliqué automatiquement entre ses membres
+const GROUP_TYPE_TO_RELATION={Business:"Partenaire",Spiritualité:"Connaissance",Sport:"Connaissance",Hobby:"Ami(e)",Famille:"Famille"};
+// Compatibilité : connection_types peut contenir une chaîne (ancien format) ou un tableau (nouveau)
+function relTypesArray(v){if(!v)return[];return Array.isArray(v)?v:[v];}
 const SECTORS_DEFAULT=["Finance","Tech","Tourisme","Immobilier","Legal","Santé","Éducation","Média","Retail","Agroalimentaire","Énergie","Associatif","Art","Sport","Institutionnel"];
 const COUNTRY_CODES=[{code:"+230",flag:"🇲🇺"},{code:"+33",flag:"🇫🇷"},{code:"+1",flag:"🇺🇸"},{code:"+44",flag:"🇬🇧"},{code:"+27",flag:"🇿🇦"},{code:"+91",flag:"🇮🇳"},{code:"+86",flag:"🇨🇳"},{code:"+49",flag:"🇩🇪"},{code:"+971",flag:"🇦🇪"},{code:"+254",flag:"🇰🇪"},{code:"+221",flag:"🇸🇳"},{code:"+225",flag:"🇨🇮"}];
 
@@ -469,9 +476,10 @@ function ContactNetwork({contact,contacts,onSelect,height}){
     const outer=[
       ...connectedContacts.map(c=>{
         const owned=(contact.connections||[]).map(String).includes(String(c.id));
-        const relType=owned?connMeta[String(c.id)]:null;
-        const relLabel=relType||"connexion";
-        return{id:c.id,label:c.initials||"?",name:c.first_name,color:C.red,textColor:"#fff",known:true,contactObj:c,relLabel,closeness:relType?(RELATION_CLOSENESS[relType]??35):20};
+        const relTypes=owned?relTypesArray(connMeta[String(c.id)]):[];
+        const relLabel=relTypes.length?relTypes.join(", "):"connexion";
+        const closenessRef=relTypes.length?Math.max(...relTypes.map(t=>RELATION_CLOSENESS[t]??35)):20;
+        return{id:c.id,label:c.initials||"?",name:c.first_name,color:C.red,textColor:"#fff",known:true,contactObj:c,relLabel,closeness:closenessRef};
       }),
       ...related.map(r=>({id:r.id,label:r.initials||"?",name:(r.name||"").split(" ")[0],color:r.known?C.red:C.grayLight,textColor:r.known?"#fff":C.gray,known:!!r.known,contactObj:null,relLabel:r.type||"lié",closeness:r.type?(RELATION_CLOSENESS[r.type]??35):20})),
     ];
@@ -713,7 +721,7 @@ function MediaGallery({contact,onUpdate}){
 }
 
 // ── FICHE CONTACT ──────────────────────────────────────────────────────────────
-function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
+function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,customRelationTypes,onCreateCustomRelationType,groupMeta,onUpsertGroupMeta,onBulkSyncGroup}){
   const [tab,setTab]=useState("brief");
   const [photoErr,setPhotoErr]=useState(false);
   const [showActionMenu,setShowActionMenu]=useState(false);
@@ -883,7 +891,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
           <div><div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Connexions dans ta base</div>
             {contacts.filter(x=>connSet.has(String(x.id))).map((r,i)=>{
               const owned=(c.connections||[]).map(String).includes(String(r.id));
-              const relType=(c.connection_types||{})[String(r.id)]||"";
+              const relTypes=relTypesArray((c.connection_types||{})[String(r.id)]);
               const isOpen=openRelEditor===String(r.id);
               return(
                 <div key={i} style={{background:"#F7F7F7",borderRadius:8,padding:"8px 10px",marginBottom:4,border:"1px solid "+C.grayLight}}>
@@ -894,19 +902,15 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
                   </div>
                   <div style={{marginTop:6,paddingLeft:36}} onClick={e=>e.stopPropagation()}>
                     {owned?(
-                      <button onClick={()=>setOpenRelEditor(isOpen?null:String(r.id))} style={{fontSize:9,padding:"3px 9px",borderRadius:10,background:relType?C.red+"12":C.bgSoft,color:relType?C.red:C.gray,border:"1px solid "+(relType?C.redMid:C.grayLight),cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>
-                        {relType||"Définir la relation"} {isOpen?"▲":"▼"}
+                      <button onClick={()=>setOpenRelEditor(isOpen?null:String(r.id))} style={{fontSize:9,padding:"3px 9px",borderRadius:10,background:relTypes.length?C.red+"12":C.bgSoft,color:relTypes.length?C.red:C.gray,border:"1px solid "+(relTypes.length?C.redMid:C.grayLight),cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>
+                        {relTypes.length?relTypes.join(", "):"Définir la relation"} {isOpen?"▲":"▼"}
                       </button>
                     ):(
                       <span style={{fontSize:9,color:C.gray,fontStyle:"italic"}}>connexion entrante — définie depuis la fiche de {r.first_name}</span>
                     )}
                     {owned&&isOpen&&(
-                      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
-                        {RELATION_TYPES.map(rt=>{
-                          const active=relType===rt;
-                          const rtBorder="1px solid "+(active?C.red:C.grayLight);
-                          return(<button key={rt} onClick={()=>{onUpdate({connection_types:{...(c.connection_types||{}),[String(r.id)]:rt}});setOpenRelEditor(null);}} style={{padding:"3px 9px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#fff",color:active?"#fff":C.gray,border:rtBorder}}>{rt}</button>);
-                        })}
+                      <div style={{marginTop:6}}>
+                        <RelationTypePicker selected={relTypes} onChange={(next)=>onUpdate({connection_types:{...(c.connection_types||{}),[String(r.id)]:next}})} customTypes={customRelationTypes} onCreateCustomType={onCreateCustomRelationType} color={C.red}/>
                       </div>
                     )}
                   </div>
@@ -973,6 +977,11 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
           existingRegions={[...new Set(contacts.map(x=>x.region).filter(Boolean))].sort()}
           existingCities={[...new Set(contacts.map(x=>x.location_city).filter(Boolean))].sort()}
           existingTags={[...new Set(contacts.flatMap(x=>x.tags||[]))].sort()}
+          customRelationTypes={customRelationTypes}
+          onCreateCustomRelationType={onCreateCustomRelationType}
+          groupMeta={groupMeta}
+          onUpsertGroupMeta={onUpsertGroupMeta}
+          onBulkSyncGroup={onBulkSyncGroup}
           onClose={()=>setShowEditModal(false)}
           onSave={async(patch)=>{await onUpdate(patch);setShowEditModal(false);}}
         />
@@ -982,7 +991,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete}){
 }
 
 // ── MODAL ÉDITION CONTACT ──────────────────────────────────────────────────────
-function EditContactModal({contact,contacts,onClose,onSave,existingGroups,existingCompanies,existingCountries,existingRegions,existingCities,existingTags}){
+function EditContactModal({contact,contacts,onClose,onSave,existingGroups,existingCompanies,existingCountries,existingRegions,existingCities,existingTags,customRelationTypes,onCreateCustomRelationType,groupMeta,onUpsertGroupMeta,onBulkSyncGroup}){
   const c=contact;
   const others=contacts.filter(x=>String(x.id)!==String(c.id));
   const [customSectors,setCustomSectors]=useState([]);
@@ -1148,7 +1157,10 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups,existi
               </div>
               {field("Alias / Surnom","alias")}
               {form.genre==="F"&&field("Nom de jeune fille","maiden_name")}
-              {chipRow("Ma relation avec cette personne (multi)","my_relation",RELATION_TYPES,true)}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Ma relation avec cette personne (multi)</label>
+                <RelationTypePicker selected={form.my_relation} onChange={(next)=>set("my_relation",next)} customTypes={customRelationTypes} onCreateCustomType={onCreateCustomRelationType} color={C.red}/>
+              </div>
               {field("Poste","role")}
               <AutocompleteField label="Entreprise" value={form.company} onChange={v=>set("company",v)} suggestions={existingCompanies||[]} placeholder="Nexus Capital" inp={inp} lbl={lbl}/>
               <div style={{marginBottom:12}}>
@@ -1187,8 +1199,8 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups,existi
                 {showNewGroup&&(
                   <div style={{display:"flex",gap:6}}>
                     <input value={newGroup} onChange={e=>setNewGroup(e.target.value)} placeholder="Nom du groupe..." style={{...inp,flex:1}}
-                      onKeyDown={e=>{if(e.key==="Enter"&&newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));setNewGroup("");setShowNewGroup(false);}}}/>
-                    <button onClick={()=>{if(newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));setNewGroup("");setShowNewGroup(false);}}} style={{padding:"10px 14px",background:C.purple,border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
+                      onKeyDown={e=>{if(e.key==="Enter"&&newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));if(onUpsertGroupMeta)onUpsertGroupMeta(g,"Autre");setNewGroup("");setShowNewGroup(false);}}}/>
+                    <button onClick={()=>{if(newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));if(onUpsertGroupMeta)onUpsertGroupMeta(g,"Autre");setNewGroup("");setShowNewGroup(false);}}} style={{padding:"10px 14px",background:C.purple,border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
                   </div>
                 )}
               </div>
@@ -1267,7 +1279,7 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups,existi
                 const sel=form.connections.includes(String(ec.id));
                 const cardBorder="1px solid "+(sel?"rgba(26,122,74,0.3)":C.grayLight);
                 const btnBorder="1px solid "+(sel?C.green:C.grayLight);
-                const currentType=form.connection_types[String(ec.id)]||"";
+                const currentTypes=relTypesArray(form.connection_types[String(ec.id)]);
                 return(
                   <div key={ec.id} style={{background:sel?"#F0FFF6":"#F7F7F7",border:cardBorder,borderRadius:10,padding:"10px 12px",marginBottom:6}}>
                     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:sel?8:0}}>
@@ -1283,12 +1295,8 @@ function EditContactModal({contact,contacts,onClose,onSave,existingGroups,existi
                       }} style={{padding:"5px 10px",borderRadius:8,border:btnBorder,background:sel?"rgba(26,122,74,0.1)":"none",color:sel?C.green:C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>{sel?"✓ Lié":"+ Lier"}</button>
                     </div>
                     {sel&&(
-                      <div style={{display:"flex",flexWrap:"wrap",gap:5,paddingLeft:40}}>
-                        {RELATION_TYPES.map(rt=>{
-                          const active=currentType===rt;
-                          const rtBorder="1px solid "+(active?C.green:C.grayLight);
-                          return(<button key={rt} onClick={()=>set("connection_types",{...form.connection_types,[String(ec.id)]:rt})} style={{padding:"3px 9px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.green:"#fff",color:active?"#fff":C.gray,border:rtBorder,transition:"all 0.15s"}}>{rt}</button>);
-                        })}
+                      <div style={{paddingLeft:40}}>
+                        <RelationTypePicker selected={currentTypes} onChange={(next)=>set("connection_types",{...form.connection_types,[String(ec.id)]:next})} customTypes={customRelationTypes} onCreateCustomType={onCreateCustomRelationType} color={C.green}/>
                       </div>
                     )}
                   </div>
@@ -1433,8 +1441,54 @@ function AutocompleteField({label,value,onChange,suggestions,placeholder,inp,lbl
   );
 }
 
+// ── SÉLECTEUR DE TYPE(S) DE RELATION (multi + sous-catégories Famille + création) ──
+function RelationTypePicker({selected,onChange,customTypes,onCreateCustomType,color}){
+  const [showNewType,setShowNewType]=useState(false);
+  const [newTypeText,setNewTypeText]=useState("");
+  const accent=color||C.green;
+  const allTypes=[...RELATION_TYPES,...(customTypes||[])];
+  const isFamilySelected=selected.some(s=>s==="Famille"||s.startsWith("Famille ("));
+  const toggle=(t)=>onChange(selected.includes(t)?selected.filter(s=>s!==t):[...selected,t]);
+  const toggleFamily=()=>{
+    if(isFamilySelected)onChange(selected.filter(s=>s!=="Famille"&&!s.startsWith("Famille (")));
+    else onChange([...selected,"Famille"]);
+  };
+  const chipStyle=(active)=>({padding:"4px 10px",borderRadius:20,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?accent:"#F7F7F7",color:active?"#fff":C.black,border:"1px solid "+(active?accent:C.grayLight),transition:"all 0.15s"});
+  return(
+    <div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+        {allTypes.map(t=>{
+          const active=t==="Famille"?isFamilySelected:selected.includes(t);
+          return(<button key={t} onClick={()=>t==="Famille"?toggleFamily():toggle(t)} style={chipStyle(active)}>{t}</button>);
+        })}
+        <button onClick={()=>setShowNewType(p=>!p)} style={{padding:"4px 10px",borderRadius:20,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",background:"none",color:accent,border:"1px dashed "+accent}}>+ Créer</button>
+      </div>
+      {isFamilySelected&&(
+        <div style={{marginTop:7,paddingLeft:10,borderLeft:"2px solid "+C.grayLight}}>
+          <div style={{fontSize:9,color:C.gray,marginBottom:4}}>Précise le lien familial :</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+            {FAMILY_SUBTYPES.map(f=>{
+              const label="Famille ("+f+")";
+              const active=selected.includes(label);
+              return(<button key={f} onClick={()=>toggle(label)} style={{padding:"3px 8px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?accent:"#fff",color:active?"#fff":C.gray,border:"1px solid "+(active?accent:C.grayLight)}}>{f}</button>);
+            })}
+          </div>
+        </div>
+      )}
+      {showNewType&&(
+        <div style={{display:"flex",gap:6,marginTop:7}}>
+          <input value={newTypeText} onChange={e=>setNewTypeText(e.target.value)} placeholder="Nouveau type de relation..."
+            style={{flex:1,padding:"7px 10px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:7,fontSize:11,outline:"none",fontFamily:"Inter,sans-serif",color:C.black}}
+            onKeyDown={e=>{if(e.key==="Enter"&&newTypeText.trim()){onCreateCustomType(newTypeText.trim());toggle(newTypeText.trim());setNewTypeText("");setShowNewType(false);}}}/>
+          <button onClick={()=>{if(newTypeText.trim()){onCreateCustomType(newTypeText.trim());toggle(newTypeText.trim());setNewTypeText("");setShowNewType(false);}}} style={{padding:"7px 12px",background:accent,border:"none",borderRadius:7,color:"#fff",fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MODAL NOUVEAU CONTACT (4 étapes) ──────────────────────────────────────────
-function AddContactModal({onClose,onSave,existingContacts,existingGroups,existingCompanies,existingCountries,existingRegions,existingCities,existingTags}){
+function AddContactModal({onClose,onSave,existingContacts,existingGroups,existingCompanies,existingCountries,existingRegions,existingCities,existingTags,customRelationTypes,onCreateCustomRelationType,groupMeta,onUpsertGroupMeta}){
   const list=existingContacts||[];
   const [step,setStep]=useState(1);
   const [customSectors,setCustomSectors]=useState([]);
@@ -1473,7 +1527,7 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups,existin
     const {selected_connections,...rest}=form;
     const orEmpty=(v)=>(v&&v.trim?(v.trim()||null):(v||null));
     const connection_types={};
-    selected_connections.forEach(sc=>{if(sc.relation_type)connection_types[String(sc.id)]=sc.relation_type;});
+    selected_connections.forEach(sc=>{if(sc.relation_types&&sc.relation_types.length)connection_types[String(sc.id)]=sc.relation_types;});
     const contact={
       ...rest,
       sector:form.sectors[0]||"",
@@ -1587,7 +1641,10 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups,existin
               </div>
               {field("Alias / Surnom","alias","text","Ex: Tony, JP...")}
               {form.genre==="F"&&field("Nom de jeune fille","maiden_name","text","Nom de naissance")}
-              {chipRow("Ma relation avec cette personne (multi)","my_relation",RELATION_TYPES,true)}
+              <div style={{marginBottom:12}}>
+                <label style={lbl}>Ma relation avec cette personne (multi)</label>
+                <RelationTypePicker selected={form.my_relation} onChange={(next)=>set("my_relation",next)} customTypes={customRelationTypes} onCreateCustomType={onCreateCustomRelationType} color={C.red}/>
+              </div>
               {field("Poste","role","text","CEO")}
               <AutocompleteField label="Entreprise" value={form.company} onChange={v=>set("company",v)} suggestions={(existingCompanies||[]).filter(c=>c!==contact.company)} placeholder="Nexus Capital" inp={inp} lbl={lbl}/>
               <div style={{marginBottom:12}}>
@@ -1626,8 +1683,8 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups,existin
                 {showNewGroup&&(
                   <div style={{display:"flex",gap:6}}>
                     <input value={newGroup} onChange={e=>setNewGroup(e.target.value)} placeholder="Nom du groupe..." style={{...inp,flex:1}}
-                      onKeyDown={e=>{if(e.key==="Enter"&&newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));setNewGroup("");setShowNewGroup(false);}}}/>
-                    <button onClick={()=>{if(newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));setNewGroup("");setShowNewGroup(false);}}} style={{padding:"10px 14px",background:C.purple,border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
+                      onKeyDown={e=>{if(e.key==="Enter"&&newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));if(onUpsertGroupMeta)onUpsertGroupMeta(g,"Autre");setNewGroup("");setShowNewGroup(false);}}}/>
+                    <button onClick={()=>{if(newGroup.trim()){const g=newGroup.trim();setCustomGroups(p=>[...p,g]);setForm(f=>({...f,groups:[...f.groups,g]}));if(onUpsertGroupMeta)onUpsertGroupMeta(g,"Autre");setNewGroup("");setShowNewGroup(false);}}} style={{padding:"10px 14px",background:C.purple,border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>OK</button>
                   </div>
                 )}
               </div>
@@ -1733,18 +1790,14 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups,existin
                       <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600,color:C.black}}>{ec.first_name} {ec.last_name}</div><div style={{fontSize:10,color:C.gray}}>{ec.role}</div></div>
                       <button onClick={()=>{
                         if(sel){set("selected_connections",form.selected_connections.filter(x=>String(x.id)!==String(ec.id)));}
-                        else{set("selected_connections",[...form.selected_connections,{id:ec.id,relation_type:""}]);}
+                        else{set("selected_connections",[...form.selected_connections,{id:ec.id,relation_types:[]}]);}
                       }} style={{padding:"5px 10px",borderRadius:8,border:btnBorder,background:sel?"rgba(26,122,74,0.1)":"none",color:sel?C.green:C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>
                         {sel?"✓ Lié":"+ Lier"}
                       </button>
                     </div>
                     {sel&&(
-                      <div style={{display:"flex",flexWrap:"wrap",gap:5,paddingLeft:42}}>
-                        {RELATION_TYPES.map(rt=>{
-                          const active=sel.relation_type===rt;
-                          const rtBorder="1px solid "+(active?C.green:C.grayLight);
-                          return(<button key={rt} onClick={()=>set("selected_connections",form.selected_connections.map(x=>String(x.id)===String(ec.id)?{...x,relation_type:rt}:x))} style={{padding:"3px 9px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.green:"#fff",color:active?"#fff":C.gray,border:rtBorder,transition:"all 0.15s"}}>{rt}</button>);
-                        })}
+                      <div style={{paddingLeft:42}}>
+                        <RelationTypePicker selected={sel.relation_types||[]} onChange={(next)=>set("selected_connections",form.selected_connections.map(x=>String(x.id)===String(ec.id)?{...x,relation_types:next}:x))} customTypes={customRelationTypes} onCreateCustomType={onCreateCustomRelationType} color={C.green}/>
                       </div>
                     )}
                   </div>
@@ -1904,7 +1957,7 @@ function DashboardStats({contacts,tasks,onSelectContact}){
 }
 
 // ── DASHBOARD SHELL (sidebar rail + panneaux + logout) ─────────────────────────
-function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkImport,onUpdateContact,onDeleteContact,onLogout}){
+function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkImport,onUpdateContact,onDeleteContact,onBulkDeleteContacts,onLogout,groupMeta,onUpsertGroupMeta,customRelationTypes,onCreateCustomRelationType}){
   const [view,setView]=useState("graph");
   const [search,setSearch]=useState("");
   const [notifications,setNotifications]=useState(MOCK_NOTIFICATIONS);
@@ -1917,7 +1970,10 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
   const [partnersSector,setPartnersSector]=useState("");
   const [taskFocus,setTaskFocus]=useState(null);
   const [showCreateGroup,setShowCreateGroup]=useState(false);
+  const [selectMode,setSelectMode]=useState(false);
+  const [selectedIds,setSelectedIds]=useState([]);
   const [newGroupName,setNewGroupName]=useState("");
+  const [newGroupType,setNewGroupType]=useState("Autre");
   const [newGroupIds,setNewGroupIds]=useState([]);
   const [groupPickerSearch,setGroupPickerSearch]=useState("");
   const windowWidth=useWindowWidth();
@@ -1958,13 +2014,14 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
   async function handleCreateGroup(){
     const name=newGroupName.trim();
     if(!name||newGroupIds.length===0)return;
+    if(onUpsertGroupMeta)await onUpsertGroupMeta(name,newGroupType);
     await Promise.all(newGroupIds.map(id=>{
       const target=contacts.find(c=>String(c.id)===String(id));
       if(!target)return Promise.resolve();
       const nextGroups=Array.from(new Set([...(target.groups||[]),name]));
       return onUpdateContact(id,{groups:nextGroups});
     }));
-    setNewGroupName("");setNewGroupIds([]);setGroupPickerSearch("");setShowCreateGroup(false);
+    setNewGroupName("");setNewGroupType("Autre");setNewGroupIds([]);setGroupPickerSearch("");setShowCreateGroup(false);
   }
 
   let filtered=contacts.filter(c=>{
@@ -2039,11 +2096,31 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
             <span style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Groupes / Associations</span>
             <button onClick={()=>setShowCreateGroup(p=>!p)} style={{fontSize:9,color:C.purple,background:"none",border:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:700}}>{showCreateGroup?"× Annuler":"+ Créer"}</button>
           </div>
-          {opts.groups.map(v=>checkRow(filters.groups.includes(v),v,contacts.filter(c=>(c.groups||[]).includes(v)).length,()=>toggleFilter("groups",v)))}
+          {opts.groups.map(v=>{
+            const gType=(groupMeta&&groupMeta[v])||"Autre";
+            const gColor=GROUP_TYPE_COLOR[gType]||C.gray;
+            return(
+              <div key={v} style={{display:"flex",alignItems:"center",gap:4}}>
+                <div style={{flex:1}}>{checkRow(filters.groups.includes(v),v,contacts.filter(c=>(c.groups||[]).includes(v)).length,()=>toggleFilter("groups",v))}</div>
+                <span style={{fontSize:8,padding:"1px 5px",borderRadius:8,background:gColor+"18",color:gColor,fontWeight:600,flexShrink:0,marginRight:2}}>{gType}</span>
+              </div>
+            );
+          })}
           {opts.groups.length===0&&!showCreateGroup&&<div style={{fontSize:10,color:C.gray,marginBottom:4}}>Aucun groupe pour l'instant</div>}
           {showCreateGroup&&(
             <div style={{background:"#fff",border:"1px solid "+C.grayLight,borderRadius:10,padding:10,marginTop:6}}>
               <input value={newGroupName} onChange={e=>setNewGroupName(e.target.value)} placeholder="Nom du nouveau groupe..." style={{width:"100%",padding:"7px 9px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:7,fontSize:11,outline:"none",fontFamily:"Inter,sans-serif",color:C.black,marginBottom:8}}/>
+              <div style={{fontSize:9,color:C.gray,marginBottom:5}}>Type de groupe (détermine la relation appliquée automatiquement entre les membres) :</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
+                {GROUP_TYPES.map(t=>{
+                  const active=newGroupType===t;
+                  const tColor=GROUP_TYPE_COLOR[t]||C.gray;
+                  return(<button key={t} onClick={()=>setNewGroupType(t)} style={{padding:"4px 9px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?tColor:"#F7F7F7",color:active?"#fff":C.black,border:"1px solid "+(active?tColor:C.grayLight)}}>{t}</button>);
+                })}
+              </div>
+              {GROUP_TYPE_TO_RELATION[newGroupType]&&(
+                <div style={{fontSize:9,color:C.gray,marginBottom:8,fontStyle:"italic"}}>→ Les membres seront automatiquement connectés en tant que "{GROUP_TYPE_TO_RELATION[newGroupType]}"</div>
+              )}
               <input value={groupPickerSearch} onChange={e=>setGroupPickerSearch(e.target.value)} placeholder="Rechercher des contacts à ajouter..." style={{width:"100%",padding:"7px 9px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:7,fontSize:11,outline:"none",fontFamily:"Inter,sans-serif",color:C.black,marginBottom:8}}/>
               <div style={{maxHeight:160,overflowY:"auto",marginBottom:8}}>
                 {contacts.filter(c=>((c.first_name||"")+" "+(c.last_name||"")).toLowerCase().includes(groupPickerSearch.toLowerCase())).map(c=>{
@@ -2215,6 +2292,9 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
                 <button key={v} onClick={()=>{setView(v);if(activeSection==="dashboard")setActiveSection(null);}} style={{padding:"5px 9px",borderRadius:6,border:"none",background:(view===v&&activeSection!=="dashboard")?C.red:"transparent",color:(view===v&&activeSection!=="dashboard")?"#fff":C.gray,fontSize:13,cursor:"pointer",fontFamily:"Inter,sans-serif",transition:"all 0.15s"}}>{l}</button>
               ))}
             </div>
+            {view==="list"&&(
+              <button onClick={()=>{setSelectMode(p=>!p);setSelectedIds([]);}} style={{padding:"6px 10px",background:selectMode?C.red:"#F7F7F7",border:"1px solid "+(selectMode?C.red:C.grayLight),borderRadius:8,color:selectMode?"#fff":C.gray,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600,flexShrink:0}}>{selectMode?"✕":"☑"}</button>
+            )}
           </>
         )}
         <div style={{position:"relative",flexShrink:0}}>
@@ -2310,12 +2390,16 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
                     <div style={{position:"absolute",bottom:14,left:"50%",transform:"translateX(-50%)",fontSize:11,color:C.gray,pointerEvents:"none",whiteSpace:"nowrap"}}>Cliquez sur un nœud pour voir la fiche</div>
                   </>
                 ):(
-                  <div style={{padding:12,overflowY:"auto",height:"100%"}}>
+                  <div style={{padding:12,overflowY:"auto",height:"100%",paddingBottom:selectMode&&selectedIds.length>0?70:12}}>
                     {filtered.map(c=>{
                       const score=healthScore(c),hcol=healthColor(score);
+                      const isChecked=selectedIds.includes(String(c.id));
                       return(
-                        <div key={c.id} onClick={()=>onSelect(c)} style={{display:"flex",alignItems:"center",gap:12,background:C.bg,border:"1px solid "+C.grayLight,borderRadius:10,padding:"11px 14px",cursor:"pointer",marginBottom:6}}
-                          onMouseEnter={e=>e.currentTarget.style.background="#F7F7F7"} onMouseLeave={e=>e.currentTarget.style.background=C.bg}>
+                        <div key={c.id} onClick={()=>{if(selectMode){setSelectedIds(ids=>isChecked?ids.filter(x=>x!==String(c.id)):[...ids,String(c.id)]);}else{onSelect(c);}}} style={{display:"flex",alignItems:"center",gap:12,background:isChecked?C.redSoft:C.bg,border:"1px solid "+(isChecked?C.redMid:C.grayLight),borderRadius:10,padding:"11px 14px",cursor:"pointer",marginBottom:6}}
+                          onMouseEnter={e=>{if(!isChecked)e.currentTarget.style.background="#F7F7F7";}} onMouseLeave={e=>{if(!isChecked)e.currentTarget.style.background=C.bg;}}>
+                          {selectMode&&(
+                            <div style={{width:18,height:18,borderRadius:5,border:"1.5px solid "+(isChecked?C.red:C.grayLight),background:isChecked?C.red:"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>{isChecked&&<span style={{color:"#fff",fontSize:11,lineHeight:1}}>✓</span>}</div>
+                          )}
                           <div style={{width:38,height:38,borderRadius:"50%",background:"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.black,flexShrink:0,overflow:"hidden"}}>
                             {c.photo_url?<img src={c.photo_url} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span>{c.initials||"?"}</span>}
                           </div>
@@ -2325,6 +2409,20 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
                       );
                     })}
                     {filtered.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:C.gray,fontSize:13}}>Aucun contact correspondant</div>}
+                  </div>
+                )}
+                {selectMode&&selectedIds.length>0&&(
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,background:C.black,padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 -4px 16px rgba(0,0,0,0.15)"}}>
+                    <span style={{fontSize:12,color:"#fff",fontWeight:600}}>{selectedIds.length} sélectionné{selectedIds.length>1?"s":""}</span>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>setSelectedIds([])} style={{padding:"7px 14px",background:"rgba(255,255,255,0.1)",border:"none",borderRadius:8,color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>Annuler</button>
+                      <button onClick={async()=>{
+                        if(window.confirm("Supprimer définitivement "+selectedIds.length+" contact(s) ? Cette action est irréversible.")){
+                          await onBulkDeleteContacts(selectedIds);
+                          setSelectedIds([]);setSelectMode(false);
+                        }
+                      }} style={{padding:"7px 14px",background:C.red,border:"none",borderRadius:8,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>🗑 Supprimer</button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2339,7 +2437,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
                 <ContactNetwork contact={selected} contacts={contacts} onSelect={onSelect} height={220}/>
               </div>
               <div style={{flex:1}}>
-                <ContactCardContent contact={selected} contacts={contacts} onSelect={onSelect} onUpdate={(patch)=>onUpdateContact(selected.id,patch)} onDelete={()=>onDeleteContact(selected.id)}/>
+                <ContactCardContent contact={selected} contacts={contacts} onSelect={onSelect} onUpdate={(patch)=>onUpdateContact(selected.id,patch)} onDelete={()=>onDeleteContact(selected.id)} customRelationTypes={customRelationTypes} onCreateCustomRelationType={onCreateCustomRelationType} groupMeta={groupMeta} onUpsertGroupMeta={onUpsertGroupMeta}/>
               </div>
             </div>
           ):(
@@ -2353,7 +2451,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
                 </div>
               </div>
               <div style={{width:360,flexShrink:0,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-                <ContactCardContent contact={selected} contacts={contacts} onSelect={onSelect} onUpdate={(patch)=>onUpdateContact(selected.id,patch)} onDelete={()=>onDeleteContact(selected.id)}/>
+                <ContactCardContent contact={selected} contacts={contacts} onSelect={onSelect} onUpdate={(patch)=>onUpdateContact(selected.id,patch)} onDelete={()=>onDeleteContact(selected.id)} customRelationTypes={customRelationTypes} onCreateCustomRelationType={onCreateCustomRelationType} groupMeta={groupMeta} onUpsertGroupMeta={onUpsertGroupMeta}/>
               </div>
             </div>
           )}
@@ -2361,7 +2459,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
       </div>
 
       {showImport&&<ImportTerminal onClose={()=>setShowImport(false)} onBulkImport={onBulkImport}/>}
-      {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={onSaveContact} existingContacts={contacts} existingGroups={allGroupsInData} existingCompanies={allCompaniesInData} existingCountries={allCountriesInData} existingRegions={allRegionsInData} existingCities={allCitiesInData} existingTags={allTagsInData}/>}
+      {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={onSaveContact} existingContacts={contacts} existingGroups={allGroupsInData} existingCompanies={allCompaniesInData} existingCountries={allCountriesInData} existingRegions={allRegionsInData} existingCities={allCitiesInData} existingTags={allTagsInData} customRelationTypes={customRelationTypes} onCreateCustomRelationType={onCreateCustomRelationType} groupMeta={groupMeta} onUpsertGroupMeta={onUpsertGroupMeta}/>}
       {!showAddContact&&!showImport&&!selected&&<HexFAB onClick={()=>setShowAddContact(true)}/>}
       <ChatWidget/>
     </div>
@@ -2419,8 +2517,45 @@ export default function App(){
   const [contacts,setContacts]=useState([]);
   const [loading,setLoading]=useState(true);
   const [dbError,setDbError]=useState(null);
+  const [groupMeta,setGroupMeta]=useState({});
+  const [customRelationTypes,setCustomRelationTypes]=useState([]);
 
-  useEffect(()=>{if(unlocked)loadContacts();},[unlocked]);
+  useEffect(()=>{if(unlocked){loadContacts();loadGroupMeta();loadCustomRelationTypes();}},[unlocked]);
+
+  async function loadGroupMeta(){
+    try{
+      const {data,error}=await supabase.from("group_meta").select("*");
+      if(error)throw error;
+      const map={};(data||[]).forEach(r=>{map[r.name]=r.type;});
+      setGroupMeta(map);
+    }catch(e){console.error("Erreur chargement group_meta:",e);}
+  }
+
+  async function loadCustomRelationTypes(){
+    try{
+      const {data,error}=await supabase.from("custom_relation_types").select("*").order("name");
+      if(error)throw error;
+      setCustomRelationTypes((data||[]).map(r=>r.name));
+    }catch(e){console.error("Erreur chargement custom_relation_types:",e);}
+  }
+
+  async function upsertGroupMeta(name,type){
+    if(!name)return;
+    setGroupMeta(prev=>({...prev,[name]:type}));
+    try{
+      const {error}=await supabase.from("group_meta").upsert([{name,type}],{onConflict:"name"});
+      if(error)throw error;
+    }catch(e){console.error("Erreur upsert group_meta:",e);}
+  }
+
+  async function createCustomRelationType(name){
+    if(!name||customRelationTypes.includes(name))return;
+    setCustomRelationTypes(prev=>[...prev,name].sort());
+    try{
+      const {error}=await supabase.from("custom_relation_types").insert([{name}]);
+      if(error&&error.code!=="23505")throw error; // ignore doublon (déjà créé ailleurs)
+    }catch(e){console.error("Erreur création type de relation:",e);}
+  }
 
   async function loadContacts(){
     setLoading(true);
@@ -2445,6 +2580,42 @@ export default function App(){
     }
   }
 
+  async function syncGroupConnections(contact,allContactsSnapshot){
+    const groups=contact.groups||[];
+    if(!groups.length)return;
+    const updates={};
+    const ensureEntry=(id,base)=>{
+      if(!updates[id]){
+        updates[id]={connections:new Set((base.connections||[]).map(String)),types:{},base};
+        Object.keys(base.connection_types||{}).forEach(k=>{updates[id].types[k]=new Set(relTypesArray(base.connection_types[k]));});
+      }
+      return updates[id];
+    };
+    const focal=ensureEntry(contact.id,contact);
+    for(const groupName of groups){
+      const type=groupMeta[groupName]||"Autre";
+      const relation=GROUP_TYPE_TO_RELATION[type];
+      if(!relation)continue;
+      const members=allContactsSnapshot.filter(c=>String(c.id)!==String(contact.id)&&(c.groups||[]).includes(groupName));
+      for(const member of members){
+        focal.connections.add(String(member.id));
+        if(!focal.types[String(member.id)])focal.types[String(member.id)]=new Set();
+        focal.types[String(member.id)].add(relation);
+        const other=ensureEntry(member.id,member);
+        other.connections.add(String(contact.id));
+        if(!other.types[String(contact.id)])other.types[String(contact.id)]=new Set();
+        other.types[String(contact.id)].add(relation);
+      }
+    }
+    for(const id of Object.keys(updates)){
+      const u=updates[id];
+      const connections=Array.from(u.connections);
+      const connection_types={...(u.base.connection_types||{})};
+      Object.keys(u.types).forEach(k=>{connection_types[k]=Array.from(u.types[k]);});
+      await updateContact(id,{connections,connection_types});
+    }
+  }
+
   async function saveContact(contact){
     const {id,selected_connections,...rest}=contact;
     const toInsert={...rest,last_interaction:new Date().toISOString().split("T")[0]};
@@ -2454,6 +2625,7 @@ export default function App(){
       const saved=normalizeContact(data);
       setContacts(prev=>[saved,...prev]);
       setSelected(saved);
+      if((saved.groups||[]).length)await syncGroupConnections(saved,[...contacts,saved]);
     }catch(e){
       console.error("Supabase save error:",e);
       alert("Erreur de sauvegarde: "+((e&&e.message)||"inconnue"));
@@ -2467,6 +2639,10 @@ export default function App(){
       const norm=normalizeContact(data);
       setContacts(prev=>prev.map(c=>String(c.id)===String(id)?norm:c));
       setSelected(s=>(s&&String(s.id)===String(id))?norm:s);
+      if(Object.prototype.hasOwnProperty.call(patch,"groups")&&(norm.groups||[]).length){
+        const snapshot=contacts.map(c=>String(c.id)===String(id)?norm:c);
+        await syncGroupConnections(norm,snapshot);
+      }
       return norm;
     }catch(e){
       console.error("Supabase update error:",e);
@@ -2491,6 +2667,26 @@ export default function App(){
     }catch(e){
       console.error("Supabase delete error:",e);
       alert("Erreur de suppression: "+((e&&e.message)||"inconnue"));
+      return false;
+    }
+  }
+
+  async function bulkDeleteContacts(ids){
+    const idSet=new Set(ids.map(String));
+    try{
+      const {error}=await supabase.from("contacts").delete().in("id",ids);
+      if(error)throw error;
+      const affected=contacts.filter(c=>(c.connections||[]).map(String).some(cid=>idSet.has(cid))&&!idSet.has(String(c.id)));
+      await Promise.all(affected.map(c=>{
+        const nextConns=(c.connections||[]).filter(cid=>!idSet.has(String(cid)));
+        return supabase.from("contacts").update({connections:nextConns}).eq("id",c.id);
+      }));
+      setContacts(prev=>prev.filter(c=>!idSet.has(String(c.id))).map(c=>({...c,connections:(c.connections||[]).filter(cid=>!idSet.has(String(cid)))})));
+      setSelected(s=>(s&&idSet.has(String(s.id)))?null:s);
+      return true;
+    }catch(e){
+      console.error("Supabase bulk delete error:",e);
+      alert("Erreur de suppression multiple: "+((e&&e.message)||"inconnue"));
       return false;
     }
   }
@@ -2571,7 +2767,12 @@ export default function App(){
       onBulkImport={bulkImport}
       onUpdateContact={updateContact}
       onDeleteContact={deleteContact}
+      onBulkDeleteContacts={bulkDeleteContacts}
       onLogout={logout}
+      groupMeta={groupMeta}
+      onUpsertGroupMeta={upsertGroupMeta}
+      customRelationTypes={customRelationTypes}
+      onCreateCustomRelationType={createCustomRelationType}
     />
   );
 }
