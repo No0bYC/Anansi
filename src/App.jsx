@@ -94,6 +94,35 @@ function fileToResizedDataURL(file,max=640,quality=0.82){
   });
 }
 
+// Parseur d'export WhatsApp (.txt) — gère les formats iOS et Android, messages multi-lignes
+function parseWhatsAppExport(text){
+  const lines=text.split(/\r?\n/);
+  const messages=[];
+  const iosRe=/^\[(\d{1,2}\/\d{1,2}\/\d{2,4}),\s(\d{1,2}:\d{2}(?::\d{2})?)\]\s([^:]+):\s(.*)$/;
+  const androidRe=/^(\d{1,2}\/\d{1,2}\/\d{2,4}),\s(\d{1,2}:\d{2})\s?-\s([^:]+):\s(.*)$/;
+  let current=null;
+  for(const line of lines){
+    const iosMatch=line.match(iosRe);
+    const androidMatch=!iosMatch?line.match(androidRe):null;
+    const match=iosMatch||androidMatch;
+    if(match){
+      if(current)messages.push(current);
+      const [,date,time,sender,txt]=match;
+      // Normalise la date en objet Date (tolère JJ/MM/AAAA et JJ/MM/AA)
+      const parts=date.split("/");
+      let day=parseInt(parts[0],10),month=parseInt(parts[1],10),year=parseInt(parts[2],10);
+      if(year<100)year+=2000;
+      const dateObj=new Date(year,month-1,day);
+      current={date,time,sender:sender.trim(),text:txt.trim(),raw:line,dateObj};
+    }else if(current){
+      current.text+="\n"+line;
+      current.raw+="\n"+line;
+    }
+  }
+  if(current)messages.push(current);
+  return messages;
+}
+
 // Parseur CSV robuste (guillemets, virgules internes, retours ligne)
 function parseCSVRows(text){
   const rows=[];let cur=[];let field="";let inQ=false;
@@ -720,6 +749,267 @@ function MediaGallery({contact,onUpdate}){
   );
 }
 
+// ── ANALYSE DE CONVERSATION WHATSAPP ───────────────────────────────────────────
+function WhatsAppAnalysisModal({contact,onClose,onApply}){
+  const [messages,setMessages]=useState([]);
+  const [fileName,setFileName]=useState("");
+  const [rangeChoice,setRangeChoice]=useState("all");
+  const [customFrom,setCustomFrom]=useState("");
+  const [customTo,setCustomTo]=useState("");
+  const [step,setStep]=useState("upload"); // upload | analyzing | results
+  const [result,setResult]=useState(null);
+  const [error,setError]=useState("");
+  const [applyChecks,setApplyChecks]=useState({});
+  const fileRef=useRef(null);
+  const contactName=((contact.first_name||"")+" "+(contact.last_name||"")).trim();
+
+  const handleFile=async(file)=>{
+    if(!file)return;
+    setFileName(file.name);
+    setError("");
+    const text=await file.text();
+    const parsed=parseWhatsAppExport(text);
+    if(parsed.length===0){setError("Aucun message reconnu dans ce fichier. Vérifie qu'il s'agit bien d'un export WhatsApp (.txt).");return;}
+    setMessages(parsed);
+  };
+
+  const availableRange=messages.length?{
+    min:new Date(Math.min(...messages.map(m=>m.dateObj?.getTime()||Infinity).filter(t=>t!==Infinity))),
+    max:new Date(Math.max(...messages.map(m=>m.dateObj?.getTime()||0))),
+  }:null;
+
+  const filteredMessages=(()=>{
+    if(!messages.length)return[];
+    let from=null,to=null;
+    const now=new Date();
+    if(rangeChoice==="3m"){from=new Date(now);from.setMonth(from.getMonth()-3);}
+    else if(rangeChoice==="6m"){from=new Date(now);from.setMonth(from.getMonth()-6);}
+    else if(rangeChoice==="12m"){from=new Date(now);from.setMonth(from.getMonth()-12);}
+    else if(rangeChoice==="custom"){
+      from=customFrom?new Date(customFrom):null;
+      to=customTo?new Date(customTo):null;
+    }
+    return messages.filter(m=>{
+      if(!m.dateObj)return true;
+      if(from&&m.dateObj<from)return false;
+      if(to&&m.dateObj>to)return false;
+      return true;
+    });
+  })();
+
+  const runAnalysis=async()=>{
+    if(!filteredMessages.length){setError("Aucun message dans la plage sélectionnée.");return;}
+    setStep("analyzing");setError("");
+    try{
+      const range=filteredMessages.length?{from:filteredMessages[0].date,to:filteredMessages[filteredMessages.length-1].date}:null;
+      const res=await fetch("/api/analyze-conversation",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({contactName,messages:filteredMessages.map(m=>({raw:m.raw})),dateRange:range}),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||"Erreur inconnue");
+      setResult(data);
+      const initial={};
+      Object.keys(data.suggested_updates||{}).forEach(k=>{initial[k]=true;});
+      setApplyChecks(initial);
+      setStep("results");
+    }catch(e){
+      setError(e.message||"Erreur d'analyse");
+      setStep("upload");
+    }
+  };
+
+  const handleApply=async()=>{
+    const patch={psychological_profile:result.profile};
+    const su=result.suggested_updates||{};
+    if(applyChecks.primary_lever&&su.primary_lever)patch.primary_lever=su.primary_lever;
+    if(applyChecks.secondary_lever&&su.secondary_lever)patch.secondary_lever=su.secondary_lever;
+    if(applyChecks.discussion_points_add&&(su.discussion_points_add||[]).length)patch.discussion_points=Array.from(new Set([...(contact.discussion_points||[]),...su.discussion_points_add]));
+    if(applyChecks.topics_to_avoid_add&&(su.topics_to_avoid_add||[]).length)patch.topics_to_avoid=Array.from(new Set([...(contact.topics_to_avoid||[]),...su.topics_to_avoid_add]));
+    if(applyChecks.hobbies_add&&(su.hobbies_add||[]).length)patch.hobbies=Array.from(new Set([...(contact.hobbies||[]),...su.hobbies_add]));
+    if(applyChecks.current_desire&&su.current_desire)patch.current_desire=su.current_desire;
+    if(applyChecks.red_lines&&su.red_lines)patch.red_lines=su.red_lines;
+    await onApply(patch);
+    onClose();
+  };
+
+  const saveProfileOnly=async()=>{
+    await onApply({psychological_profile:result.profile});
+    onClose();
+  };
+
+  const rangeBtn=(key,label)=>{
+    const active=rangeChoice===key;
+    return(<button key={key} onClick={()=>setRangeChoice(key)} style={{padding:"6px 12px",borderRadius:8,fontSize:11,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#F7F7F7",color:active?"#fff":C.black,border:"1px solid "+(active?C.red:C.grayLight)}}>{label}</button>);
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:110,backdropFilter:"blur(2px)"}}>
+      <div style={{background:C.bg,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:520,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 -8px 40px rgba(0,0,0,0.15)"}}>
+        <div style={{padding:"20px 20px 14px",borderBottom:"1px solid "+C.grayLight,flexShrink:0,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:800,color:C.black}}>📱 Analyser une conversation</div>
+            <div style={{fontSize:11,color:C.gray,marginTop:2}}>{contactName}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,color:C.gray,lineHeight:1}}>×</button>
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:20}}>
+          {step==="upload"&&(
+            <>
+              <div style={{fontSize:11,color:C.gray,lineHeight:1.6,marginBottom:14}}>
+                Sur WhatsApp : ouvre la conversation → ⋮ (ou nom du contact) → <b>Exporter la discussion</b> → <b>Sans les médias</b>. Charge le fichier .txt obtenu ici.
+              </div>
+              {!messages.length?(
+                <div onClick={()=>fileRef.current&&fileRef.current.click()} style={{border:"2px dashed "+C.grayLight,borderRadius:12,padding:28,textAlign:"center",cursor:"pointer",background:"#F7F7F7"}}
+                  onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();handleFile(e.dataTransfer.files[0]);}}>
+                  <div style={{fontSize:26,marginBottom:8}}>📄</div>
+                  <div style={{fontSize:13,color:C.black,fontWeight:600}}>Déposer le fichier .txt ici</div>
+                  <div style={{fontSize:11,color:C.gray,marginTop:4}}>ou cliquer pour parcourir</div>
+                  <input ref={fileRef} type="file" accept=".txt" style={{display:"none"}} onChange={e=>handleFile(e.target.files[0])}/>
+                </div>
+              ):(
+                <>
+                  <div style={{background:"#F0FFF6",border:"1px solid rgba(26,122,74,0.2)",borderRadius:10,padding:"10px 12px",marginBottom:16}}>
+                    <div style={{fontSize:12,fontWeight:600,color:C.green}}>✓ {fileName}</div>
+                    <div style={{fontSize:11,color:C.gray,marginTop:2}}>{messages.length} messages détectés{availableRange?" · du "+availableRange.min.toLocaleDateString("fr-FR")+" au "+availableRange.max.toLocaleDateString("fr-FR"):""}</div>
+                  </div>
+                  <div style={{fontSize:10,color:C.gray,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,fontWeight:600}}>Quelle période analyser ?</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+                    {rangeBtn("all","Toute la conversation")}
+                    {rangeBtn("3m","3 derniers mois")}
+                    {rangeBtn("6m","6 derniers mois")}
+                    {rangeBtn("12m","12 derniers mois")}
+                    {rangeBtn("custom","Plage personnalisée")}
+                  </div>
+                  {rangeChoice==="custom"&&(
+                    <div style={{display:"flex",gap:8,marginBottom:12}}>
+                      <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{flex:1,padding:"8px 10px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:8,fontSize:12,fontFamily:"Inter,sans-serif"}}/>
+                      <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{flex:1,padding:"8px 10px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:8,fontSize:12,fontFamily:"Inter,sans-serif"}}/>
+                    </div>
+                  )}
+                  <div style={{background:C.redSoft,borderRadius:10,padding:"8px 10px",marginBottom:14}}>
+                    <div style={{fontSize:11,color:C.red,fontWeight:600}}>{filteredMessages.length} message(s) seront analysés</div>
+                  </div>
+                  <button onClick={()=>{setMessages([]);setFileName("");}} style={{fontSize:11,color:C.gray,background:"none",border:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",marginBottom:8}}>← Changer de fichier</button>
+                </>
+              )}
+              {error&&<div style={{color:C.red,fontSize:11,marginTop:10}}>{error}</div>}
+            </>
+          )}
+
+          {step==="analyzing"&&(
+            <div style={{textAlign:"center",padding:"40px 0"}}>
+              <div style={{fontSize:28,marginBottom:12}}>🔎</div>
+              <div style={{fontSize:13,color:C.black,fontWeight:600}}>Analyse en cours...</div>
+              <div style={{fontSize:11,color:C.gray,marginTop:4}}>{filteredMessages.length} messages — ça peut prendre jusqu'à une minute</div>
+            </div>
+          )}
+
+          {step==="results"&&result&&(
+            <>
+              {result.profile.relationship_qualification&&(
+                <div style={{background:C.black,borderRadius:12,padding:"14px 16px",marginBottom:14}}>
+                  <div style={{fontSize:9,color:"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6,fontWeight:600}}>Qualification de la relation</div>
+                  <div style={{fontSize:15,fontWeight:800,color:"#fff",marginBottom:6}}>{result.profile.relationship_qualification.type}</div>
+                  <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:result.profile.relationship_qualification.points_of_attention?8:0}}>
+                    <span style={{fontSize:10,color:"rgba(255,255,255,0.6)"}}>Réciprocité :</span>
+                    <span style={{fontSize:10,color:"#fff",fontWeight:700,padding:"2px 8px",background:"rgba(255,255,255,0.15)",borderRadius:10}}>{result.profile.relationship_qualification.reciprocity_level}</span>
+                  </div>
+                  {result.profile.relationship_qualification.points_of_attention&&(
+                    <div style={{fontSize:11,color:"rgba(255,255,255,0.85)",lineHeight:1.5,borderTop:"1px solid rgba(255,255,255,0.15)",paddingTop:8,marginTop:2}}>⚠ {result.profile.relationship_qualification.points_of_attention}</div>
+                  )}
+                </div>
+              )}
+
+              <div style={{fontSize:10,color:C.gray,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,fontWeight:600}}>Quatre grilles de lecture</div>
+
+              {result.profile.needs_register&&(
+                <div style={{background:"#FFF8F0",border:"1px solid rgba(184,92,0,0.15)",borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                  <div style={{fontSize:9,color:C.amber,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3,fontWeight:600}}>Maslow — registre de besoin</div>
+                  <div style={{fontSize:12,fontWeight:700,color:C.amber,marginBottom:3}}>{result.profile.needs_register.dominant_level}{result.profile.needs_register.secondary_level?" / "+result.profile.needs_register.secondary_level:""}</div>
+                  <div style={{fontSize:11,color:C.blackSoft,lineHeight:1.5}}>{result.profile.needs_register.evidence}</div>
+                </div>
+              )}
+
+              {result.profile.capital_dynamics&&(
+                <div style={{background:"#F0F4FF",border:"1px solid rgba(26,74,138,0.15)",borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                  <div style={{fontSize:9,color:C.blue,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3,fontWeight:600}}>Bourdieu — capital & pouvoir</div>
+                  <div style={{fontSize:12,fontWeight:700,color:C.blue,marginBottom:3}}>{result.profile.capital_dynamics.symmetry}{(result.profile.capital_dynamics.capital_types||[]).length?" · "+result.profile.capital_dynamics.capital_types.join(", "):""}</div>
+                  <div style={{fontSize:11,color:C.blackSoft,lineHeight:1.5}}>{result.profile.capital_dynamics.evidence}</div>
+                </div>
+              )}
+
+              {result.profile.communication_patterns&&(result.profile.communication_patterns.notable_pattern||result.profile.communication_patterns.self_vs_other_focus)&&(
+                <div style={{background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                  <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3,fontWeight:600}}>Patterns de communication</div>
+                  {result.profile.communication_patterns.self_vs_other_focus&&<div style={{fontSize:12,fontWeight:700,color:C.black,marginBottom:3}}>{result.profile.communication_patterns.self_vs_other_focus}</div>}
+                  {result.profile.communication_patterns.notable_pattern&&<div style={{fontSize:11,color:C.blackSoft,lineHeight:1.5}}>{result.profile.communication_patterns.notable_pattern}</div>}
+                  {(result.profile.communication_patterns.recurring_themes||[]).length>0&&<div style={{fontSize:10,color:C.gray,marginTop:4}}>Thèmes récurrents : {result.profile.communication_patterns.recurring_themes.join(", ")}</div>}
+                </div>
+              )}
+
+              {result.profile.authenticity_read&&(
+                <div style={{background:C.green+"0c",border:"1px solid rgba(26,122,74,0.2)",borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                  <div style={{fontSize:9,color:C.green,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3,fontWeight:600}}>Sartre — authenticité</div>
+                  <div style={{fontSize:12,fontWeight:700,color:C.green,marginBottom:3}}>{result.profile.authenticity_read.posture}</div>
+                  <div style={{fontSize:11,color:C.blackSoft,lineHeight:1.5}}>{result.profile.authenticity_read.evidence}</div>
+                </div>
+              )}
+
+              {result.profile.disc_profile&&(
+                <div style={{background:C.purple+"0c",border:"1px solid "+C.purple+"30",borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+                  <div style={{fontSize:9,color:C.purple,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3,fontWeight:600}}>Style de communication (DISC)</div>
+                  <div style={{fontSize:12,fontWeight:700,color:C.purple,marginBottom:3}}>{result.profile.disc_profile.primary}{result.profile.disc_profile.secondary?" / "+result.profile.disc_profile.secondary:""}</div>
+                  <div style={{fontSize:11,color:C.blackSoft,lineHeight:1.5}}>{result.profile.disc_profile.description}</div>
+                </div>
+              )}
+
+              <div style={{background:"#F7F7F7",borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3,fontWeight:600}}>Observations libres</div>
+                <div style={{fontSize:12,color:C.blackSoft,lineHeight:1.6}}>{result.profile.free_observations}</div>
+              </div>
+              <div style={{fontSize:10,color:C.gray,fontStyle:"italic",marginBottom:16}}>{result.profile.confidence_note}</div>
+
+              {Object.keys(result.suggested_updates||{}).length>0&&(
+                <>
+                  <div style={{fontSize:10,color:C.gray,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,fontWeight:600}}>Suggestions pour la fiche</div>
+                  {[
+                    ["primary_lever","Levier principal",result.suggested_updates.primary_lever],
+                    ["secondary_lever","Levier secondaire",result.suggested_updates.secondary_lever],
+                    ["discussion_points_add","Points de discussion",(result.suggested_updates.discussion_points_add||[]).join(", ")],
+                    ["topics_to_avoid_add","À éviter",(result.suggested_updates.topics_to_avoid_add||[]).join(", ")],
+                    ["hobbies_add","Hobbies",(result.suggested_updates.hobbies_add||[]).join(", ")],
+                    ["current_desire","Désir actuel",result.suggested_updates.current_desire],
+                    ["red_lines","Ligne rouge",result.suggested_updates.red_lines],
+                  ].filter(([,,v])=>v&&v.length).map(([key,label,value])=>(
+                    <button key={key} onClick={()=>setApplyChecks(p=>({...p,[key]:!p[key]}))} style={{display:"flex",alignItems:"flex-start",gap:8,width:"100%",padding:"8px 10px",borderRadius:8,background:applyChecks[key]?C.redSoft:"#F7F7F7",border:"1px solid "+(applyChecks[key]?C.redMid:C.grayLight),marginBottom:6,cursor:"pointer",textAlign:"left",fontFamily:"Inter,sans-serif"}}>
+                      <div style={{width:14,height:14,borderRadius:4,border:"1.5px solid "+(applyChecks[key]?C.red:C.grayLight),background:applyChecks[key]?C.red:"transparent",flexShrink:0,marginTop:1,display:"flex",alignItems:"center",justifyContent:"center"}}>{applyChecks[key]&&<span style={{color:"#fff",fontSize:9,lineHeight:1}}>✓</span>}</div>
+                      <div><div style={{fontSize:11,fontWeight:600,color:C.black}}>{label}</div><div style={{fontSize:11,color:C.gray}}>{value}</div></div>
+                    </button>
+                  ))}
+                </>
+              )}
+            </>
+          )}
+        </div>
+
+        <div style={{padding:"14px 20px 28px",borderTop:"1px solid "+C.grayLight,display:"flex",gap:8,flexShrink:0}}>
+          {step==="upload"&&(
+            <button onClick={runAnalysis} disabled={!messages.length} style={{flex:1,padding:12,background:messages.length?C.red:C.grayLight,border:"none",borderRadius:12,color:"#fff",fontSize:13,fontWeight:700,cursor:messages.length?"pointer":"default",fontFamily:"Inter,sans-serif"}}>Analyser</button>
+          )}
+          {step==="results"&&(
+            <>
+              <button onClick={saveProfileOnly} style={{flex:1,padding:12,background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:12,color:C.black,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>Garder le profil seul</button>
+              <button onClick={handleApply} style={{flex:2,padding:12,background:C.red,border:"none",borderRadius:12,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>✓ Appliquer à la fiche</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── FICHE CONTACT ──────────────────────────────────────────────────────────────
 function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,customRelationTypes,onCreateCustomRelationType,groupMeta,onUpsertGroupMeta,onBulkSyncGroup}){
   const [tab,setTab]=useState("brief");
@@ -727,6 +1017,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,custo
   const [showActionMenu,setShowActionMenu]=useState(false);
   const [showEditModal,setShowEditModal]=useState(false);
   const [openRelEditor,setOpenRelEditor]=useState(null);
+  const [showWhatsAppAnalysis,setShowWhatsAppAnalysis]=useState(false);
   const photoRef=useRef(null);
   const score=healthScore(c),hcol=healthColor(score);
   const connSet=connectedIdsOf(c,contacts);
@@ -819,6 +1110,29 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,custo
         </div>)}
 
         {tab==="psyché"&&(<div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <button onClick={()=>setShowWhatsAppAnalysis(true)} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px",background:"#F0F4FF",border:"1px solid rgba(26,74,138,0.2)",borderRadius:10,color:C.blue,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>📱 Analyser une conversation WhatsApp</button>
+          {c.psychological_profile&&(
+            <div style={{background:C.purple+"0c",border:"1px solid "+C.purple+"25",borderRadius:10,padding:"10px 12px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <span style={{fontSize:9,color:C.purple,textTransform:"uppercase",letterSpacing:"0.07em",fontWeight:600}}>Profil psychologique</span>
+                <span style={{fontSize:9,color:C.gray}}>{c.psychological_profile.analyzed_at}</span>
+              </div>
+              {c.psychological_profile.relationship_qualification&&(
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.black}}>{c.psychological_profile.relationship_qualification.type}</span>
+                  <span style={{fontSize:9,color:C.purple,background:C.purple+"15",padding:"1px 7px",borderRadius:10,fontWeight:600}}>Réciprocité {c.psychological_profile.relationship_qualification.reciprocity_level}</span>
+                </div>
+              )}
+              {c.psychological_profile.disc_profile&&(
+                <div style={{fontSize:11,fontWeight:600,color:C.purple,marginBottom:4}}>Style : {c.psychological_profile.disc_profile.primary}{c.psychological_profile.disc_profile.secondary?" / "+c.psychological_profile.disc_profile.secondary:""}</div>
+              )}
+              <div style={{fontSize:12,color:C.blackSoft,lineHeight:1.5,marginBottom:6}}>{c.psychological_profile.free_observations}</div>
+              {c.psychological_profile.relationship_qualification?.points_of_attention&&(
+                <div style={{fontSize:11,color:C.red,lineHeight:1.5,marginBottom:6}}>⚠ {c.psychological_profile.relationship_qualification.points_of_attention}</div>
+              )}
+              <div style={{fontSize:9,color:C.gray,fontStyle:"italic"}}>{c.psychological_profile.confidence_note}</div>
+            </div>
+          )}
           <div style={{background:"#F7F7F7",borderRadius:10,padding:"10px 12px"}}>
             <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3}}>Ego dominant</div>
             <div style={{fontSize:12,fontWeight:700,color:C.red,textTransform:"capitalize"}}>{c.ego_type||"–"}</div>
@@ -985,6 +1299,9 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,custo
           onClose={()=>setShowEditModal(false)}
           onSave={async(patch)=>{await onUpdate(patch);setShowEditModal(false);}}
         />
+      )}
+      {showWhatsAppAnalysis&&(
+        <WhatsAppAnalysisModal contact={c} onClose={()=>setShowWhatsAppAnalysis(false)} onApply={async(patch)=>{await onUpdate(patch);}}/>
       )}
     </div>
   );
@@ -2487,6 +2804,7 @@ function normalizeContact(row){
     groups:row.groups||[],
     connection_types:row.connection_types||{},
     web_insights:row.web_insights||[],
+    psychological_profile:row.psychological_profile||null,
     last_interaction:row.last_interaction||"–",
     genre:row.genre||"M",
     alias:row.alias||"",
