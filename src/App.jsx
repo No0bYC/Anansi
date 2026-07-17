@@ -96,10 +96,16 @@ function fileToResizedDataURL(file,max=640,quality=0.82){
 
 // Parseur d'export WhatsApp (.txt) — gère les formats iOS et Android, messages multi-lignes
 function parseWhatsAppExport(text){
-  const lines=text.split(/\r?\n/);
+  // Retire les caractères de formatage invisibles que WhatsApp insère (marques
+  // de direction de texte U+200E/U+200F, BOM, espaces zero-width) — sans ça,
+  // certaines lignes (notamment avant les crochets) ne matchent jamais.
+  const cleaned=text.replace(/[\u200E\u200F\uFEFF\u200B]/g,"");
+  const lines=cleaned.split(/\r?\n/);
   const messages=[];
-  const iosRe=/^\[(\d{1,2}\/\d{1,2}\/\d{2,4}),\s(\d{1,2}:\d{2}(?::\d{2})?)\]\s([^:]+):\s(.*)$/;
-  const androidRe=/^(\d{1,2}\/\d{1,2}\/\d{2,4}),\s(\d{1,2}:\d{2})\s?-\s([^:]+):\s(.*)$/;
+  // Tolère une virgule OU un simple espace entre date et heure (varie selon la
+  // langue du téléphone et la version de WhatsApp), avec ou sans secondes/AM-PM
+  const iosRe=/^\[(\d{1,2}\/\d{1,2}\/\d{2,4})[,\s]+(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AP]M)?)\]\s([^:]+):\s?(.*)$/;
+  const androidRe=/^(\d{1,2}\/\d{1,2}\/\d{2,4}),\s(\d{1,2}:\d{2}(?:\s?[AP]M)?)\s?-\s([^:]+):\s?(.*)$/;
   let current=null;
   for(const line of lines){
     const iosMatch=line.match(iosRe);
