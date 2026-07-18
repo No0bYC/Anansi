@@ -16,12 +16,46 @@ const LEVER_CONFIG={statut:{icon:"👑",desc:"Reconnaître sa valeur publiquemen
 const LEVERS=["statut","réciprocité","appartenance","intérêt","cohérence"];
 const EGOS=["faire","avoir","être perçu"];
 const RELATION_TYPES=["Famille","Ami(e)","Collègue","Partenaire","Connaissance","Voisin","Mentor","Mentee","Client","Fournisseur","Investisseur","Concurrent"];
-const FAMILY_SUBTYPES=["Parent","Époux/se","Enfant","Frère","Sœur","Oncle","Tante","Cousin","Autre"];
+const FAMILY_SUBTYPES=["Parent","Époux/se","Enfant","Frère","Sœur","Oncle","Tante","Neveu","Nièce","Cousin","Autre"];
+
+// ── Réciprocité automatique des relations ──────────────────────────────────────
+// Types symétriques : la même étiquette s'applique des deux côtés.
+const RECIPROCAL_RELATION_MAP={
+  "Ami(e)":"Ami(e)","Collègue":"Collègue","Partenaire":"Partenaire","Connaissance":"Connaissance",
+  "Voisin":"Voisin","Concurrent":"Concurrent","Investisseur":"Investisseur",
+  "Mentor":"Mentee","Mentee":"Mentor","Client":"Fournisseur","Fournisseur":"Client",
+};
+// Sous-types Famille asymétriques : le réciproque dépend du GENRE de la personne
+// qui reçoit la nouvelle étiquette. Si X (femme) dit sur SA fiche "Y est mon Enfant",
+// alors sur la fiche de Y, X doit apparaître comme "Mère" (genre de X = origine du calcul).
+function reciprocalFamilySubtype(subtype,ownerGenre){
+  const isF=ownerGenre==="F";
+  const map={
+    "Parent":isF?"Fille":"Fils",
+    "Enfant":isF?"Mère":"Père",
+    "Frère":isF?"Sœur":"Frère","Sœur":isF?"Sœur":"Frère",
+    "Oncle":isF?"Nièce":"Neveu","Tante":isF?"Nièce":"Neveu",
+    "Neveu":isF?"Tante":"Oncle","Nièce":isF?"Tante":"Oncle",
+    "Cousin":isF?"Cousine":"Cousin",
+    "Époux/se":isF?"Épouse":"Époux",
+    "Autre":"Autre",
+  };
+  return map[subtype]||"Autre";
+}
+// Calcule le type à écrire sur la fiche de B, sachant que A (propriétaire de
+// l'entrée d'origine, de genre `ownerGenre`) a défini `type` en se reliant à B.
+function reciprocalRelationType(type,ownerGenre){
+  const famMatch=/^Famille \(([^)]+)\)$/.exec(type);
+  if(famMatch)return "Famille ("+reciprocalFamilySubtype(famMatch[1],ownerGenre)+")";
+  if(type==="Famille")return "Famille";
+  return RECIPROCAL_RELATION_MAP[type]||type;
+}
+
 const PRO_RELATIONS=["Collègue","Partenaire","Client","Fournisseur","Investisseur","Mentor","Mentee","Concurrent"];
 const GROUP_TYPES=["Business","Spiritualité","Sport","Hobby","Famille","Autre"];
 const GROUP_TYPE_COLOR={Business:C.blue,"Spiritualité":C.purple,Sport:C.green,Hobby:C.amber,Famille:C.red,Autre:C.gray};
 // Type de groupe -> type de relation appliqué automatiquement entre ses membres
-const GROUP_TYPE_TO_RELATION={Business:"Partenaire",Spiritualité:"Connaissance",Sport:"Connaissance",Hobby:"Ami(e)",Famille:"Famille"};
+const GROUP_TYPE_TO_RELATION={Business:"Partenaire",Famille:"Famille",Spiritualité:"Connaissance",Sport:"Connaissance",Hobby:"Connaissance",Autre:"Connaissance"};
 // Compatibilité : connection_types peut contenir une chaîne (ancien format) ou un tableau (nouveau)
 function relTypesArray(v){if(!v)return[];return Array.isArray(v)?v:[v];}
 const SECTORS_DEFAULT=["Finance","Tech","Tourisme","Immobilier","Legal","Santé","Éducation","Média","Retail","Agroalimentaire","Énergie","Associatif","Art","Sport","Institutionnel"];
@@ -497,6 +531,14 @@ function ContactNetwork({contact,contacts,onSelect,height}){
   const canvasRef=useRef(null);
   const animRef=useRef(null);
   const nodesRef=useRef([]);
+  const viewRef=useRef({scale:1,panX:0,panY:0});
+  const [,forceTick]=useState(0);
+  const dragRef=useRef({active:false,lastX:0,lastY:0,moved:false});
+  const pinchRef=useRef({active:false,startDist:0,startScale:1});
+  const clampScale=(s)=>Math.max(0.5,Math.min(3,s));
+  const applyZoom=(factor)=>{viewRef.current.scale=clampScale(viewRef.current.scale*factor);forceTick(t=>t+1);};
+  const resetView=()=>{viewRef.current={scale:1,panX:0,panY:0};forceTick(t=>t+1);};
+
   useEffect(()=>{
     const canvas=canvasRef.current;if(!canvas)return;
     const dpr=window.devicePixelRatio||1;
@@ -529,15 +571,20 @@ function ContactNetwork({contact,contacts,onSelect,height}){
     ];
     const loop=()=>{
       ctx.clearRect(0,0,W,H);
+      ctx.save();
+      const view=viewRef.current;
+      ctx.translate(W/2+view.panX,H/2+view.panY);
+      ctx.scale(view.scale,view.scale);
+      ctx.translate(-W/2,-H/2);
       // Cercles-guides de proximité
       RING_LABELS.forEach((ring)=>{
         const rr=ringRadiusFraction(ring.min+0.1)*maxDist;
         ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);
-        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1;ctx.setLineDash([3,4]);ctx.stroke();ctx.setLineDash([]);
+        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1/view.scale;ctx.setLineDash([3,4]);ctx.stroke();ctx.setLineDash([]);
       });
       nodesRef.current.slice(1).forEach(n=>{
         ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(n.x,n.y);
-        ctx.strokeStyle="rgba(0,0,0,0.07)";ctx.lineWidth=1;ctx.stroke();
+        ctx.strokeStyle="rgba(0,0,0,0.07)";ctx.lineWidth=1/view.scale;ctx.stroke();
         const mx=cx*0.35+n.x*0.65,my=cy*0.35+n.y*0.65;
         ctx.fillStyle="rgba(0,0,0,0.35)";ctx.font="8px Inter,sans-serif";ctx.textAlign="center";
         ctx.fillText(n.relLabel,mx,my);
@@ -546,7 +593,7 @@ function ContactNetwork({contact,contacts,onSelect,height}){
         if(n.isCenter){ctx.beginPath();ctx.arc(n.x,n.y,n.r+7,0,Math.PI*2);ctx.fillStyle="rgba(204,0,0,0.08)";ctx.fill();}
         ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
         ctx.fillStyle=n.isCenter?C.red:n.color;ctx.fill();
-        if(!n.isCenter){ctx.strokeStyle=n.known?C.red:C.grayLight;ctx.lineWidth=1.2;ctx.stroke();}
+        if(!n.isCenter){ctx.strokeStyle=n.known?C.red:C.grayLight;ctx.lineWidth=1.2/view.scale;ctx.stroke();}
         ctx.fillStyle=n.textColor||"#fff";
         ctx.font="bold "+(n.r*0.52)+"px Inter,sans-serif";
         ctx.textAlign="center";ctx.textBaseline="middle";
@@ -554,22 +601,83 @@ function ContactNetwork({contact,contacts,onSelect,height}){
         ctx.fillStyle=C.gray;ctx.font="9px Inter,sans-serif";
         ctx.fillText(n.name||"",n.x,n.y+n.r+11);
       });
+      ctx.restore();
       animRef.current=requestAnimationFrame(loop);
     };
     loop();
     return()=>cancelAnimationFrame(animRef.current);
   },[contact,contacts,height]);
-  const handleClick=useCallback((e)=>{
-    const canvas=canvasRef.current;if(!canvas)return;
+
+  const clientToWorld=(clientX,clientY)=>{
+    const canvas=canvasRef.current;
     const rect=canvas.getBoundingClientRect();
     const dpr=window.devicePixelRatio||1;
     const scaleX=(canvas.width/dpr)/rect.width,scaleY=(canvas.height/dpr)/rect.height;
-    const mx=(e.clientX-rect.left)*scaleX,my=(e.clientY-rect.top)*scaleY;
-    const hit=nodesRef.current.find(n=>{if(n.isCenter)return false;const dx=n.x-mx,dy=n.y-my;return Math.sqrt(dx*dx+dy*dy)<n.r+10&&n.known&&n.contactObj;});
+    const mx=(clientX-rect.left)*scaleX,my=(clientY-rect.top)*scaleY;
+    const W=canvas.offsetWidth||300,H=canvas.offsetHeight||300;
+    const view=viewRef.current;
+    return{x:(mx-W/2-view.panX)/view.scale+W/2,y:(my-H/2-view.panY)/view.scale+H/2};
+  };
+  const findHit=(wx,wy)=>nodesRef.current.find(n=>{if(n.isCenter)return false;const dx=n.x-wx,dy=n.y-wy;return Math.sqrt(dx*dx+dy*dy)<n.r+10&&n.known&&n.contactObj;});
+
+  const onMouseMove=useCallback((e)=>{
+    if(dragRef.current.active){
+      const dx=e.clientX-dragRef.current.lastX,dy=e.clientY-dragRef.current.lastY;
+      if(Math.abs(dx)+Math.abs(dy)>2)dragRef.current.moved=true;
+      viewRef.current.panX+=dx;viewRef.current.panY+=dy;
+      dragRef.current.lastX=e.clientX;dragRef.current.lastY=e.clientY;
+    }
+  },[]);
+  const onMouseDown=useCallback((e)=>{dragRef.current={active:true,lastX:e.clientX,lastY:e.clientY,moved:false};},[]);
+  const onMouseUp=useCallback(()=>{dragRef.current.active=false;},[]);
+  const onWheel=useCallback((e)=>{e.preventDefault();applyZoom(e.deltaY<0?1.1:0.9);},[]);
+
+  const touchDist=(touches)=>{const dx=touches[0].clientX-touches[1].clientX,dy=touches[0].clientY-touches[1].clientY;return Math.sqrt(dx*dx+dy*dy);};
+  const onTouchStart=useCallback((e)=>{
+    if(e.touches.length===2){
+      pinchRef.current={active:true,startDist:touchDist(e.touches),startScale:viewRef.current.scale};
+      dragRef.current.active=false;
+    }else if(e.touches.length===1){
+      const t=e.touches[0];
+      dragRef.current={active:true,lastX:t.clientX,lastY:t.clientY,moved:false};
+    }
+  },[]);
+  const onTouchMove=useCallback((e)=>{
+    if(pinchRef.current.active&&e.touches.length===2){
+      const newDist=touchDist(e.touches);
+      viewRef.current.scale=clampScale(pinchRef.current.startScale*(newDist/pinchRef.current.startDist));
+      return;
+    }
+    if(dragRef.current.active&&e.touches.length===1){
+      const t=e.touches[0];
+      const dx=t.clientX-dragRef.current.lastX,dy=t.clientY-dragRef.current.lastY;
+      if(Math.abs(dx)+Math.abs(dy)>2)dragRef.current.moved=true;
+      viewRef.current.panX+=dx;viewRef.current.panY+=dy;
+      dragRef.current.lastX=t.clientX;dragRef.current.lastY=t.clientY;
+    }
+  },[]);
+  const onTouchEnd=useCallback(()=>{pinchRef.current.active=false;dragRef.current.active=false;},[]);
+
+  const handleClick=useCallback((e)=>{
+    if(dragRef.current.moved){dragRef.current.moved=false;return;}
+    const world=clientToWorld(e.clientX,e.clientY);
+    const hit=findHit(world.x,world.y);
     if(hit)onSelect(hit.contactObj);
   },[onSelect]);
-  const canvasStyle=height?{width:"100%",height:height+"px",display:"block",cursor:"pointer"}:{width:"100%",height:"100%",display:"block",cursor:"pointer"};
-  return <canvas ref={canvasRef} onClick={handleClick} style={canvasStyle}/>;
+
+  const wrapStyle=height?{position:"relative",width:"100%",height:height+"px"}:{position:"relative",width:"100%",height:"100%"};
+  return(
+    <div style={wrapStyle}>
+      <canvas ref={canvasRef} onClick={handleClick} onMouseMove={onMouseMove} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onWheel={onWheel}
+        style={{width:"100%",height:"100%",display:"block",cursor:"pointer"}}/>
+      <div style={{position:"absolute",bottom:8,right:8,display:"flex",flexDirection:"column",gap:3,background:"rgba(255,255,255,0.92)",backdropFilter:"blur(8px)",border:"1px solid "+C.grayLight,borderRadius:8,padding:3,boxShadow:"0 2px 8px rgba(0,0,0,0.08)"}}>
+        <button onClick={()=>applyZoom(1.2)} style={{width:24,height:24,border:"none",background:"none",borderRadius:5,fontSize:13,color:C.black,cursor:"pointer",fontWeight:700}}>+</button>
+        <button onClick={resetView} style={{width:24,height:16,border:"none",background:"none",borderRadius:5,fontSize:8,color:C.gray,cursor:"pointer"}}>{Math.round(viewRef.current.scale*100)}%</button>
+        <button onClick={()=>applyZoom(1/1.2)} style={{width:24,height:24,border:"none",background:"none",borderRadius:5,fontSize:13,color:C.black,cursor:"pointer",fontWeight:700}}>−</button>
+      </div>
+    </div>
+  );
 }
 
 // ── TOILE GLOBALE ──────────────────────────────────────────────────────────────
@@ -579,6 +687,15 @@ function NetworkGraph({contacts,onSelect,highlightId}){
   const edgesRef=useRef([]);
   const animRef=useRef(null);
   const hovRef=useRef(null);
+  const viewRef=useRef({scale:1,panX:0,panY:0});
+  const [,forceTick]=useState(0); // force un re-render pour le libellé de zoom affiché
+  const dragRef=useRef({active:false,lastX:0,lastY:0,moved:false});
+  const pinchRef=useRef({active:false,startDist:0,startScale:1});
+
+  const clampScale=(s)=>Math.max(0.5,Math.min(3,s));
+  const applyZoom=(factor)=>{viewRef.current.scale=clampScale(viewRef.current.scale*factor);forceTick(t=>t+1);};
+  const resetView=()=>{viewRef.current={scale:1,panX:0,panY:0};forceTick(t=>t+1);};
+
   useEffect(()=>{
     const canvas=canvasRef.current;if(!canvas)return;
     const W=canvas.offsetWidth,H=canvas.offsetHeight;
@@ -608,12 +725,17 @@ function NetworkGraph({contacts,onSelect,highlightId}){
     let frame=0;
     const loop=()=>{
       const ctx=canvas.getContext("2d");ctx.clearRect(0,0,W,H);
+      ctx.save();
+      const view=viewRef.current;
+      ctx.translate(W/2+view.panX,H/2+view.panY);
+      ctx.scale(view.scale,view.scale);
+      ctx.translate(-W/2,-H/2);
 
       // Cercles-guides de proximité
       RING_LABELS.forEach((ring)=>{
         const rr=ringRadiusFraction(ring.min+0.1)*maxR;
         ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);
-        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1;ctx.setLineDash([3,4]);ctx.stroke();ctx.setLineDash([]);
+        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1/view.scale;ctx.setLineDash([3,4]);ctx.stroke();ctx.setLineDash([]);
       });
 
       if(frame<100){
@@ -625,8 +747,6 @@ function NetworkGraph({contacts,onSelect,highlightId}){
             nodes[i].vx-=f*dx/d;nodes[i].vy-=f*dy/d;
             nodes[j].vx+=f*dx/d;nodes[j].vy+=f*dy/d;
           }
-          // Force de rappel radiale : chaque nœud est tiré vers le rayon de SON cercle
-          // de proximité (l'angle reste libre, seule la distance au centre est contrainte).
           const n=nodes[i];
           const dxc=n.x-cx,dyc=n.y-cy;
           const dist=Math.sqrt(dxc*dxc+dyc*dyc)||1;
@@ -652,7 +772,7 @@ function NetworkGraph({contacts,onSelect,highlightId}){
         const hi=String(hovRef.current)===a||String(hovRef.current)===b||String(highlightId||"")===a||String(highlightId||"")===b;
         ctx.beginPath();ctx.moveTo(na.x,na.y);ctx.lineTo(nb.x,nb.y);
         ctx.strokeStyle=hi?"rgba(204,0,0,0.3)":"rgba(0,0,0,0.07)";
-        ctx.lineWidth=hi?1.5:1;ctx.stroke();
+        ctx.lineWidth=(hi?1.5:1)/view.scale;ctx.stroke();
       });
       nodesRef.current.forEach(n=>{
         const hov=String(n.id)===String(hovRef.current);
@@ -663,7 +783,7 @@ function NetworkGraph({contacts,onSelect,highlightId}){
         ctx.beginPath();ctx.arc(n.x,n.y,displayR,0,Math.PI*2);
         const fillColor=hov?C.red:(isHL?C.redSoft:"#fff");
         ctx.fillStyle=fillColor;ctx.fill();
-        ctx.strokeStyle=(hov||isHL)?C.red:"rgba(0,0,0,0.1)";ctx.lineWidth=(hov||isHL)?2:1;ctx.stroke();
+        ctx.strokeStyle=(hov||isHL)?C.red:"rgba(0,0,0,0.1)";ctx.lineWidth=(hov||isHL)?2/view.scale:1/view.scale;ctx.stroke();
         if(hov){
           const fullName=((n.contact.first_name||"")+" "+(n.contact.last_name||"")).trim();
           ctx.fillStyle="#fff";
@@ -678,15 +798,92 @@ function NetworkGraph({contacts,onSelect,highlightId}){
         }
         ctx.beginPath();ctx.arc(n.x+displayR*0.65,n.y-displayR*0.65,4,0,Math.PI*2);ctx.fillStyle=hcol;ctx.fill();
       });
+      ctx.restore();
       animRef.current=requestAnimationFrame(loop);
     };
     loop();
     return()=>cancelAnimationFrame(animRef.current);
   },[contacts,highlightId]);
-  const onMove=useCallback((e)=>{const rect=canvasRef.current.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top,hit=nodesRef.current.find(n=>{const dx=n.x-mx,dy=n.y-my;return Math.sqrt(dx*dx+dy*dy)<n.r+4;});hovRef.current=hit?hit.id:null;canvasRef.current.style.cursor=hit?"pointer":"default";},[]);
-  const onTouch=useCallback((e)=>{const rect=canvasRef.current.getBoundingClientRect(),t=e.touches[0];if(!t)return;const mx=t.clientX-rect.left,my=t.clientY-rect.top,hit=nodesRef.current.find(n=>{const dx=n.x-mx,dy=n.y-my;return Math.sqrt(dx*dx+dy*dy)<n.r+16;});hovRef.current=hit?hit.id:null;},[]);
-  const onClick=useCallback((e)=>{const rect=canvasRef.current.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top,hit=nodesRef.current.find(n=>{const dx=n.x-mx,dy=n.y-my;return Math.sqrt(dx*dx+dy*dy)<n.r+4;});if(hit)onSelect(hit.contact);},[onSelect]);
-  return <canvas ref={canvasRef} onMouseMove={onMove} onTouchStart={onTouch} onTouchMove={onTouch} onTouchEnd={()=>{setTimeout(()=>{hovRef.current=null;},800);}} onClick={onClick} style={{width:"100%",height:"100%",display:"block"}}/>;
+
+  // Convertit des coordonnées écran en coordonnées "monde" (avant zoom/pan)
+  const toWorld=(mx,my)=>{
+    const canvas=canvasRef.current;
+    const W=canvas.offsetWidth,H=canvas.offsetHeight;
+    const view=viewRef.current;
+    return{x:(mx-W/2-view.panX)/view.scale+W/2,y:(my-H/2-view.panY)/view.scale+H/2};
+  };
+  const findHit=(wx,wy)=>nodesRef.current.find(n=>{const dx=n.x-wx,dy=n.y-wy;return Math.sqrt(dx*dx+dy*dy)<n.r+4;});
+
+  const onMove=useCallback((e)=>{
+    const rect=canvasRef.current.getBoundingClientRect();
+    if(dragRef.current.active){
+      const dx=e.clientX-dragRef.current.lastX,dy=e.clientY-dragRef.current.lastY;
+      if(Math.abs(dx)+Math.abs(dy)>2)dragRef.current.moved=true;
+      viewRef.current.panX+=dx;viewRef.current.panY+=dy;
+      dragRef.current.lastX=e.clientX;dragRef.current.lastY=e.clientY;
+      return;
+    }
+    const world=toWorld(e.clientX-rect.left,e.clientY-rect.top);
+    const hit=findHit(world.x,world.y);
+    hovRef.current=hit?hit.id:null;canvasRef.current.style.cursor=hit?"pointer":"grab";
+  },[]);
+  const onMouseDown=useCallback((e)=>{dragRef.current={active:true,lastX:e.clientX,lastY:e.clientY,moved:false};},[]);
+  const onMouseUp=useCallback(()=>{dragRef.current.active=false;},[]);
+  const onWheel=useCallback((e)=>{e.preventDefault();applyZoom(e.deltaY<0?1.1:0.9);},[]);
+
+  const touchDist=(touches)=>{const dx=touches[0].clientX-touches[1].clientX,dy=touches[0].clientY-touches[1].clientY;return Math.sqrt(dx*dx+dy*dy);};
+  const onTouchStart=useCallback((e)=>{
+    if(e.touches.length===2){
+      pinchRef.current={active:true,startDist:touchDist(e.touches),startScale:viewRef.current.scale};
+      dragRef.current.active=false;
+    }else if(e.touches.length===1){
+      const t=e.touches[0];
+      dragRef.current={active:true,lastX:t.clientX,lastY:t.clientY,moved:false};
+    }
+  },[]);
+  const onTouchMove=useCallback((e)=>{
+    if(pinchRef.current.active&&e.touches.length===2){
+      const newDist=touchDist(e.touches);
+      viewRef.current.scale=clampScale(pinchRef.current.startScale*(newDist/pinchRef.current.startDist));
+      return;
+    }
+    if(dragRef.current.active&&e.touches.length===1){
+      const t=e.touches[0];
+      const dx=t.clientX-dragRef.current.lastX,dy=t.clientY-dragRef.current.lastY;
+      if(Math.abs(dx)+Math.abs(dy)>2)dragRef.current.moved=true;
+      viewRef.current.panX+=dx;viewRef.current.panY+=dy;
+      dragRef.current.lastX=t.clientX;dragRef.current.lastY=t.clientY;
+      const rect=canvasRef.current.getBoundingClientRect();
+      const world=toWorld(t.clientX-rect.left,t.clientY-rect.top);
+      const hit=findHit(world.x,world.y);
+      hovRef.current=hit?hit.id:null;
+    }
+  },[]);
+  const onTouchEnd=useCallback(()=>{
+    pinchRef.current.active=false;
+    dragRef.current.active=false;
+    setTimeout(()=>{hovRef.current=null;},800);
+  },[]);
+  const onClick=useCallback((e)=>{
+    if(dragRef.current.moved){dragRef.current.moved=false;return;}
+    const rect=canvasRef.current.getBoundingClientRect();
+    const world=toWorld(e.clientX-rect.left,e.clientY-rect.top);
+    const hit=findHit(world.x,world.y);
+    if(hit)onSelect(hit.contact);
+  },[onSelect]);
+
+  return(
+    <div style={{position:"relative",width:"100%",height:"100%"}}>
+      <canvas ref={canvasRef} onMouseMove={onMove} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onWheel={onWheel} onClick={onClick}
+        style={{width:"100%",height:"100%",display:"block"}}/>
+      <div style={{position:"absolute",bottom:14,right:14,display:"flex",flexDirection:"column",gap:4,background:"rgba(255,255,255,0.92)",backdropFilter:"blur(8px)",border:"1px solid "+C.grayLight,borderRadius:10,padding:4,boxShadow:"0 2px 8px rgba(0,0,0,0.08)"}}>
+        <button onClick={()=>applyZoom(1.2)} style={{width:28,height:28,border:"none",background:"none",borderRadius:6,fontSize:15,color:C.black,cursor:"pointer",fontWeight:700}}>+</button>
+        <button onClick={resetView} style={{width:28,height:20,border:"none",background:"none",borderRadius:6,fontSize:9,color:C.gray,cursor:"pointer"}}>{Math.round(viewRef.current.scale*100)}%</button>
+        <button onClick={()=>applyZoom(1/1.2)} style={{width:28,height:28,border:"none",background:"none",borderRadius:6,fontSize:15,color:C.black,cursor:"pointer",fontWeight:700}}>−</button>
+      </div>
+    </div>
+  );
 }
 
 // ── SCORE RING ─────────────────────────────────────────────────────────────────
@@ -2294,6 +2491,18 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
   const [taskFocus,setTaskFocus]=useState(null);
   const [showCreateGroup,setShowCreateGroup]=useState(false);
   const [selectMode,setSelectMode]=useState(false);
+  const [openFilterCats,setOpenFilterCats]=useState({});
+  const isCatOpen=(key)=>openFilterCats[key]!==false;
+  const toggleCat=(key)=>setOpenFilterCats(p=>({...p,[key]:isCatOpen(key)?false:true}));
+  const CatHeader=({catKey,label,extra})=>(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:isCatOpen(catKey)?6:2}}>
+      <button onClick={()=>toggleCat(catKey)} style={{display:"flex",alignItems:"center",gap:5,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:"Inter,sans-serif"}}>
+        <span style={{fontSize:9,color:C.gray,width:10,display:"inline-block"}}>{isCatOpen(catKey)?"▼":"◀"}</span>
+        <span style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>{label}</span>
+      </button>
+      {extra}
+    </div>
+  );
   const [selectedIds,setSelectedIds]=useState([]);
   const [newGroupName,setNewGroupName]=useState("");
   const [newGroupType,setNewGroupType]=useState("Autre");
@@ -2409,16 +2618,18 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
       <div style={{display:"flex",flexDirection:"column",gap:14}}>
         {activeFilterCount>0&&<button onClick={clearFilters} style={{fontSize:10,color:C.red,background:C.redSoft,border:"1px solid "+C.redMid,borderRadius:8,padding:6,cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:600}}>Effacer les filtres ({activeFilterCount})</button>}
         <div>
-          <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Relation à moi</div>
-          {checkRow(filters.known_personally===true,"Connu perso",undefined,()=>setFilters(f=>({...f,known_personally:f.known_personally===true?null:true})))}
-          {checkRow(filters.known_personally===false,"Indirect",undefined,()=>setFilters(f=>({...f,known_personally:f.known_personally===false?null:false})))}
-          {opts.relation.map(v=>checkRow(filters.relation.includes(v),v,contacts.filter(c=>(c.my_relation||[]).includes(v)).length,()=>toggleFilter("relation",v)))}
+          <CatHeader catKey="relation" label="Relation à moi"/>
+          {isCatOpen("relation")&&(<>
+            {checkRow(filters.known_personally===true,"Connu perso",undefined,()=>setFilters(f=>({...f,known_personally:f.known_personally===true?null:true})))}
+            {checkRow(filters.known_personally===false,"Indirect",undefined,()=>setFilters(f=>({...f,known_personally:f.known_personally===false?null:false})))}
+            {opts.relation.map(v=>checkRow(filters.relation.includes(v),v,contacts.filter(c=>(c.my_relation||[]).includes(v)).length,()=>toggleFilter("relation",v)))}
+          </>)}
         </div>
         <div>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-            <span style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",fontWeight:600}}>Groupes / Associations</span>
+          <CatHeader catKey="groups" label="Groupes / Associations" extra={
             <button onClick={()=>setShowCreateGroup(p=>!p)} style={{fontSize:9,color:C.purple,background:"none",border:"none",cursor:"pointer",fontFamily:"Inter,sans-serif",fontWeight:700}}>{showCreateGroup?"× Annuler":"+ Créer"}</button>
-          </div>
+          }/>
+          {isCatOpen("groups")&&(<>
           {opts.groups.map(v=>{
             const gType=(groupMeta&&groupMeta[v])||"Autre";
             const gColor=GROUP_TYPE_COLOR[gType]||C.gray;
@@ -2460,65 +2671,66 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
               <button onClick={handleCreateGroup} disabled={!newGroupName.trim()||newGroupIds.length===0} style={{width:"100%",padding:"7px",background:(!newGroupName.trim()||newGroupIds.length===0)?"rgba(106,13,173,0.3)":C.purple,border:"none",borderRadius:7,color:"#fff",fontSize:11,fontWeight:700,cursor:(!newGroupName.trim()||newGroupIds.length===0)?"not-allowed":"pointer",fontFamily:"Inter,sans-serif"}}>Créer le groupe ({newGroupIds.length})</button>
             </div>
           )}
+          </>)}
         </div>
         {opts.company.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Entreprise</div>
-            {opts.company.map(v=>checkRow(filters.company.includes(v),v,contacts.filter(c=>c.company===v).length,()=>toggleFilter("company",v)))}
+            <CatHeader catKey="company" label="Entreprise"/>
+            {isCatOpen("company")&&opts.company.map(v=>checkRow(filters.company.includes(v),v,contacts.filter(c=>c.company===v).length,()=>toggleFilter("company",v)))}
           </div>
         )}
         {opts.lastName.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Famille (nom)</div>
-            {opts.lastName.map(v=>checkRow(filters.lastName.includes(v),v,contacts.filter(c=>c.last_name===v).length,()=>toggleFilter("lastName",v)))}
+            <CatHeader catKey="lastName" label="Famille (nom)"/>
+            {isCatOpen("lastName")&&opts.lastName.map(v=>checkRow(filters.lastName.includes(v),v,contacts.filter(c=>c.last_name===v).length,()=>toggleFilter("lastName",v)))}
           </div>
         )}
         {opts.hobbies.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Intérêts</div>
-            {opts.hobbies.map(v=>checkRow(filters.hobbies.includes(v),v,contacts.filter(c=>(c.hobbies||[]).includes(v)).length,()=>toggleFilter("hobbies",v)))}
+            <CatHeader catKey="hobbies" label="Intérêts"/>
+            {isCatOpen("hobbies")&&opts.hobbies.map(v=>checkRow(filters.hobbies.includes(v),v,contacts.filter(c=>(c.hobbies||[]).includes(v)).length,()=>toggleFilter("hobbies",v)))}
           </div>
         )}
         {opts.country.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Pays</div>
-            {opts.country.map(v=>checkRow(filters.country.includes(v),v,contacts.filter(c=>c.country===v).length,()=>toggleFilter("country",v)))}
+            <CatHeader catKey="country" label="Pays"/>
+            {isCatOpen("country")&&opts.country.map(v=>checkRow(filters.country.includes(v),v,contacts.filter(c=>c.country===v).length,()=>toggleFilter("country",v)))}
           </div>
         )}
         {opts.region.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Région</div>
-            {opts.region.map(v=>checkRow(filters.region.includes(v),v,contacts.filter(c=>c.region===v).length,()=>toggleFilter("region",v)))}
+            <CatHeader catKey="region" label="Région"/>
+            {isCatOpen("region")&&opts.region.map(v=>checkRow(filters.region.includes(v),v,contacts.filter(c=>c.region===v).length,()=>toggleFilter("region",v)))}
           </div>
         )}
         {opts.city.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Ville</div>
-            {opts.city.map(v=>checkRow(filters.city.includes(v),v,contacts.filter(c=>c.location_city===v).length,()=>toggleFilter("city",v)))}
+            <CatHeader catKey="city" label="Ville"/>
+            {isCatOpen("city")&&opts.city.map(v=>checkRow(filters.city.includes(v),v,contacts.filter(c=>c.location_city===v).length,()=>toggleFilter("city",v)))}
           </div>
         )}
         {opts.tags.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Tags</div>
-            {opts.tags.map(v=>checkRow(filters.tags.includes(v),v,contacts.filter(c=>(c.tags||[]).includes(v)).length,()=>toggleFilter("tags",v)))}
+            <CatHeader catKey="tags" label="Tags"/>
+            {isCatOpen("tags")&&opts.tags.map(v=>checkRow(filters.tags.includes(v),v,contacts.filter(c=>(c.tags||[]).includes(v)).length,()=>toggleFilter("tags",v)))}
           </div>
         )}
         {opts.sector.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Secteur</div>
-            {opts.sector.map(v=>checkRow(filters.sector.includes(v),v,contacts.filter(c=>contactSectors(c).includes(v)).length,()=>toggleFilter("sector",v)))}
+            <CatHeader catKey="sector" label="Secteur"/>
+            {isCatOpen("sector")&&opts.sector.map(v=>checkRow(filters.sector.includes(v),v,contacts.filter(c=>contactSectors(c).includes(v)).length,()=>toggleFilter("sector",v)))}
           </div>
         )}
         {opts.primary_lever.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Levier principal</div>
-            {opts.primary_lever.map(v=>checkRow(filters.primary_lever.includes(v),v,contacts.filter(c=>c.primary_lever===v).length,()=>toggleFilter("primary_lever",v)))}
+            <CatHeader catKey="primary_lever" label="Levier principal"/>
+            {isCatOpen("primary_lever")&&opts.primary_lever.map(v=>checkRow(filters.primary_lever.includes(v),v,contacts.filter(c=>c.primary_lever===v).length,()=>toggleFilter("primary_lever",v)))}
           </div>
         )}
         {opts.ego_type.length>0&&(
           <div>
-            <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Ego</div>
-            {opts.ego_type.map(v=>checkRow(filters.ego_type.includes(v),v,contacts.filter(c=>c.ego_type===v).length,()=>toggleFilter("ego_type",v)))}
+            <CatHeader catKey="ego_type" label="Ego"/>
+            {isCatOpen("ego_type")&&opts.ego_type.map(v=>checkRow(filters.ego_type.includes(v),v,contacts.filter(c=>c.ego_type===v).length,()=>toggleFilter("ego_type",v)))}
           </div>
         )}
         <div style={{background:C.bgSoft,borderRadius:8,padding:"8px 10px"}}>
@@ -2940,6 +3152,28 @@ export default function App(){
     }
   }
 
+  async function syncReciprocalRelations(contact,connectionTypes,allContactsSnapshot){
+    if(!connectionTypes)return;
+    const ownerGenre=contact.genre||"M";
+    for(const otherId of Object.keys(connectionTypes)){
+      const types=relTypesArray(connectionTypes[otherId]);
+      if(!types.length)continue;
+      const other=allContactsSnapshot.find(c=>String(c.id)===String(otherId));
+      if(!other||String(other.id)===String(contact.id))continue;
+      const reciprocalTypes=types.map(t=>reciprocalRelationType(t,ownerGenre));
+      const existingOtherTypes=relTypesArray((other.connection_types||{})[String(contact.id)]);
+      const mergedTypes=Array.from(new Set([...existingOtherTypes,...reciprocalTypes]));
+      const alreadyConnected=(other.connections||[]).map(String).includes(String(contact.id));
+      const alreadyHasAll=reciprocalTypes.every(t=>existingOtherTypes.includes(t));
+      if(alreadyConnected&&alreadyHasAll)continue; // déjà synchronisé, rien à écrire
+      const nextConnections=alreadyConnected?other.connections:[...(other.connections||[]),contact.id];
+      const nextConnectionTypes={...(other.connection_types||{}),[String(contact.id)]:mergedTypes};
+      // skipReciprocalSync: on n'écrit la réciproque qu'à UN seul niveau de
+      // profondeur, jamais en cascade, pour éviter toute boucle.
+      await updateContact(other.id,{connections:nextConnections,connection_types:nextConnectionTypes},{skipReciprocalSync:true});
+    }
+  }
+
   async function saveContact(contact){
     const {id,selected_connections,...rest}=contact;
     const toInsert={...rest,last_interaction:new Date().toISOString().split("T")[0]};
@@ -2949,14 +3183,17 @@ export default function App(){
       const saved=normalizeContact(data);
       setContacts(prev=>[saved,...prev]);
       setSelected(saved);
-      if((saved.groups||[]).length)await syncGroupConnections(saved,[...contacts,saved]);
+      const snapshot=[...contacts,saved];
+      if((saved.groups||[]).length)await syncGroupConnections(saved,snapshot);
+      if(saved.connection_types&&Object.keys(saved.connection_types).length)await syncReciprocalRelations(saved,saved.connection_types,snapshot);
     }catch(e){
       console.error("Supabase save error:",e);
       alert("Erreur de sauvegarde: "+((e&&e.message)||"inconnue"));
     }
   }
 
-  async function updateContact(id,patch){
+  async function updateContact(id,patch,options){
+    const skipReciprocalSync=options&&options.skipReciprocalSync;
     try{
       const {data,error}=await supabase.from("contacts").update(patch).eq("id",id).select().single();
       if(error)throw error;
@@ -2966,6 +3203,10 @@ export default function App(){
       if(Object.prototype.hasOwnProperty.call(patch,"groups")&&(norm.groups||[]).length){
         const snapshot=contacts.map(c=>String(c.id)===String(id)?norm:c);
         await syncGroupConnections(norm,snapshot);
+      }
+      if(!skipReciprocalSync&&Object.prototype.hasOwnProperty.call(patch,"connection_types")){
+        const snapshot=contacts.map(c=>String(c.id)===String(id)?norm:c);
+        await syncReciprocalRelations(norm,patch.connection_types,snapshot);
       }
       return norm;
     }catch(e){
