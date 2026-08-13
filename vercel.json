@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|manifest\\.json|sw\\.js|icon-192\\.png|icon-512\\.png|icon-maskable-512\\.png|apple-touch-icon\\.png).*)", "destination": "/index.html" }
   ],
   "functions": {
     "api/whatsapp.js": { "maxDuration": 60 },
