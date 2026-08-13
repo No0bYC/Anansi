@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -100,6 +100,67 @@ function ringRadiusFraction(score){
   return 1.0; // périphérie
 }
 const RING_LABELS=[{max:100,min:75,label:"Proche"},{max:75,min:50,label:"Régulier"},{max:50,min:25,label:"Élargi"},{max:25,min:0,label:"Périphérie"}];
+const SANS_FONT="Inter,sans-serif";
+const MONO_FONT="'JetBrains Mono',monospace";
+
+// ── DÉTECTION DE COMMUNAUTÉS (territoires d'influence réels) ───────────────
+// Propagation d'étiquettes (Label Propagation Algorithm) sur les connexions
+// ENTRE contacts (jamais via Yann, sinon son statut de hub central fausse tout).
+const COMMUNITY_COLORS=["#1A4A8A","#1A7A4A","#6A0DAD","#B85C00","#0F7A7A","#8A3B12"];
+function buildContactEdges(contacts){
+  const ids=new Set(contacts.map(c=>String(c.id)));
+  const seen=new Set();
+  const edges=[];
+  contacts.forEach(c=>(c.connections||[]).forEach(cid=>{
+    const a=String(c.id),b=String(cid);
+    if(!ids.has(b))return;
+    const key=a<b?a+"|"+b:b+"|"+a;
+    if(seen.has(key))return;
+    seen.add(key);edges.push([a,b]);
+  }));
+  return edges;
+}
+function detectCommunities(nodeIds,edges,iterations=20){
+  const labels={};
+  nodeIds.forEach(n=>{labels[n]=n;});
+  const neighbors={};
+  nodeIds.forEach(n=>{neighbors[n]=[];});
+  edges.forEach(([a,b])=>{if(neighbors[a])neighbors[a].push(b);if(neighbors[b])neighbors[b].push(a);});
+  for(let iter=0;iter<iterations;iter++){
+    const order=[...nodeIds].sort(()=>Math.random()-0.5);
+    order.forEach(n=>{
+      if(!neighbors[n]||neighbors[n].length===0)return;
+      const counts={};
+      neighbors[n].forEach(nb=>{counts[labels[nb]]=(counts[labels[nb]]||0)+1;});
+      let best=labels[n],bestCount=-1;
+      Object.entries(counts).forEach(([lab,c])=>{if(c>bestCount||(c===bestCount&&Math.random()<0.5)){best=lab;bestCount=c;}});
+      labels[n]=best;
+    });
+  }
+  return labels;
+}
+function detectBridges(nodeIds,edges,labels){
+  const bridgeSet=new Set();
+  nodeIds.forEach(n=>{
+    const neighborLabels=new Set();
+    edges.forEach(([a,b])=>{if(a===n)neighborLabels.add(labels[b]);if(b===n)neighborLabels.add(labels[a]);});
+    if(neighborLabels.size>1)bridgeSet.add(n);
+  });
+  return bridgeSet;
+}
+function bfsPath(start,target,edges){
+  const adj={};
+  edges.forEach(([a,b])=>{(adj[a]=adj[a]||[]).push(b);(adj[b]=adj[b]||[]).push(a);});
+  const queue=[[start]];
+  const seenNodes=new Set([start]);
+  while(queue.length){
+    const path=queue.shift();
+    const node=path[path.length-1];
+    if(node===target)return path;
+    (adj[node]||[]).forEach(nb=>{if(!seenNodes.has(nb)){seenNodes.add(nb);queue.push([...path,nb]);}});
+  }
+  return null;
+}
 function seededRand(seed){let s=seed%2147483647;if(s<=0)s+=2147483646;s=s*16807%2147483647;return(s-1)/2147483646;}
 function idSeed(id,i){if(typeof id==="number")return id;const str=String(id||i+1);let h=0;for(let k=0;k<str.length;k++){h=(h*31+str.charCodeAt(k))|0;}return Math.abs(h)||i+1;}
 function contactSectors(c){if(Array.isArray(c.sectors)&&c.sectors.length)return c.sectors;return c.sector?[c.sector]:[];}
@@ -367,6 +428,10 @@ function ImportTerminal({onClose,onBulkImport}){
       role:get("role").trim(),company:get("company").trim(),
       sectors,sector:sectors[0]||"",
       location_city:get("location_city").trim(),
+      country:get("country").trim(),
+      region:get("region").trim(),
+      tags:splitMulti(get("tags")),
+      groups:splitMulti(get("groups")),
       country_code:get("country_code").trim()||"+230",
       phone:get("phone").trim(),email:get("email").trim(),
       known_personally:toBool(get("known_personally")),
@@ -447,7 +512,11 @@ function ImportTerminal({onClose,onBulkImport}){
         const rows=parseCSVRows(text);
         if(rows.length<2){addLog("❌ CSV vide.","error");setStep("error");return;}
         const headers=rows[0].map(h=>h.trim().toLowerCase());
-        const isAnansi=headers.includes("ref")&&headers.includes("connections");
+        // Détecte le format Anansi si ref+connections sont présents (pour lier des
+        // relations), OU si au moins une colonne "riche" propre à Anansi est là —
+        // ref/connections ne sont pas obligatoires pour un import sans liens.
+        const ANANSI_SIGNATURE_COLUMNS=["sectors","discussion_points","topics_to_avoid","primary_lever","secondary_lever","tertiary_lever","ego_type","current_desire","red_lines","known_personally","my_relation","hobbies","utility_score","sentiment_score","reliability_score","country","region","tags","groups"];
+        const isAnansi=(headers.includes("ref")&&headers.includes("connections"))||ANANSI_SIGNATURE_COLUMNS.some(col=>headers.includes(col));
         addLog(isAnansi?"🔍 Format Anansi CSV (avec relations)":"🔍 Format CSV générique");
         results=rows.slice(1).map(cells=>isAnansi?buildFromAnansiCSV(headers,cells):buildFromGenericCSV(headers,cells)).filter(Boolean);
       }else if(ext==="vcf"||ext==="vcard"){
@@ -576,30 +645,35 @@ function ContactNetwork({contact,contacts,onSelect,height}){
       ctx.translate(W/2+view.panX,H/2+view.panY);
       ctx.scale(view.scale,view.scale);
       ctx.translate(-W/2,-H/2);
+      // Échelle amortie façon Google Maps : grossit avec le zoom, mais plus
+      // doucement que la carte elle-même — jamais figé, jamais démesuré.
+      const dampScale=1/Math.sqrt(view.scale);
+      const labelScale=Math.max(0.7,Math.min(2.2,Math.sqrt(view.scale)));
       // Cercles-guides de proximité
       RING_LABELS.forEach((ring)=>{
         const rr=ringRadiusFraction(ring.min+0.1)*maxDist;
         ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);
-        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1/view.scale;ctx.setLineDash([3,4]);ctx.stroke();ctx.setLineDash([]);
+        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1*dampScale;ctx.setLineDash([3*dampScale,5*dampScale]);ctx.stroke();ctx.setLineDash([]);
       });
       nodesRef.current.slice(1).forEach(n=>{
         ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(n.x,n.y);
-        ctx.strokeStyle="rgba(0,0,0,0.07)";ctx.lineWidth=1/view.scale;ctx.stroke();
+        ctx.strokeStyle="rgba(0,0,0,0.07)";ctx.lineWidth=1*dampScale;ctx.stroke();
         const mx=cx*0.35+n.x*0.65,my=cy*0.35+n.y*0.65;
-        ctx.fillStyle="rgba(0,0,0,0.35)";ctx.font="8px Inter,sans-serif";ctx.textAlign="center";
+        ctx.fillStyle="rgba(0,0,0,0.35)";ctx.font=(8*labelScale)+"px Inter,sans-serif";ctx.textAlign="center";
         ctx.fillText(n.relLabel,mx,my);
       });
       nodesRef.current.forEach(n=>{
-        if(n.isCenter){ctx.beginPath();ctx.arc(n.x,n.y,n.r+7,0,Math.PI*2);ctx.fillStyle="rgba(204,0,0,0.08)";ctx.fill();}
-        ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
+        const dr=n.isCenter?n.r*labelScale:n.r*labelScale;
+        if(n.isCenter){ctx.beginPath();ctx.arc(n.x,n.y,dr+7*dampScale,0,Math.PI*2);ctx.fillStyle="rgba(204,0,0,0.08)";ctx.fill();}
+        ctx.beginPath();ctx.arc(n.x,n.y,dr,0,Math.PI*2);
         ctx.fillStyle=n.isCenter?C.red:n.color;ctx.fill();
-        if(!n.isCenter){ctx.strokeStyle=n.known?C.red:C.grayLight;ctx.lineWidth=1.2/view.scale;ctx.stroke();}
+        if(!n.isCenter){ctx.strokeStyle=n.known?C.red:C.grayLight;ctx.lineWidth=1.2*dampScale;ctx.stroke();}
         ctx.fillStyle=n.textColor||"#fff";
-        ctx.font="bold "+(n.r*0.52)+"px Inter,sans-serif";
+        ctx.font="bold "+(n.r*0.52*labelScale)+"px Inter,sans-serif";
         ctx.textAlign="center";ctx.textBaseline="middle";
         ctx.fillText(n.label,n.x,n.y);
-        ctx.fillStyle=C.gray;ctx.font="9px Inter,sans-serif";
-        ctx.fillText(n.name||"",n.x,n.y+n.r+11);
+        ctx.fillStyle=C.gray;ctx.font=(9*labelScale)+"px Inter,sans-serif";
+        ctx.fillText(n.name||"",n.x,n.y+dr+11*labelScale);
       });
       ctx.restore();
       animRef.current=requestAnimationFrame(loop);
@@ -685,43 +759,75 @@ function NetworkGraph({contacts,onSelect,highlightId}){
   const canvasRef=useRef(null);
   const nodesRef=useRef([]);
   const edgesRef=useRef([]);
+  const communityRef=useRef({labels:{},bridges:new Set(),colorOf:()=>C.gray});
   const animRef=useRef(null);
   const hovRef=useRef(null);
   const viewRef=useRef({scale:1,panX:0,panY:0});
-  const [,forceTick]=useState(0); // force un re-render pour le libellé de zoom affiché
+  const [,forceTick]=useState(0);
+  const [pathTargetId,setPathTargetId]=useState("");
+  const [pathSearch,setPathSearch]=useState("");
+  const [showPathPicker,setShowPathPicker]=useState(false);
   const dragRef=useRef({active:false,lastX:0,lastY:0,moved:false});
   const pinchRef=useRef({active:false,startDist:0,startScale:1});
 
-  const clampScale=(s)=>Math.max(0.5,Math.min(3,s));
+  const clampScale=(s)=>Math.max(0.5,Math.min(5,s));
   const applyZoom=(factor)=>{viewRef.current.scale=clampScale(viewRef.current.scale*factor);forceTick(t=>t+1);};
   const resetView=()=>{viewRef.current={scale:1,panX:0,panY:0};forceTick(t=>t+1);};
+
+  // Chemin le plus court vers la cible sélectionnée, recalculé à chaque changement
+  const pathIds=useMemo(()=>{
+    if(!pathTargetId)return null;
+    const edges=buildContactEdges(contacts);
+    const known=contacts.filter(c=>c.known_personally).map(c=>String(c.id));
+    const myEdges=known.map(id=>["moi",id]);
+    return bfsPath("moi",String(pathTargetId),[...edges,...myEdges]);
+  },[contacts,pathTargetId]);
+  const pathSet=useMemo(()=>new Set(pathIds||[]),[pathIds]);
+  const pathEdgeSet=useMemo(()=>new Set(pathIds?pathIds.slice(0,-1).map((n,i)=>n+"|"+pathIds[i+1]):[]),[pathIds]);
+  const isPathEdge=(a,b)=>pathEdgeSet.has(a+"|"+b)||pathEdgeSet.has(b+"|"+a);
 
   useEffect(()=>{
     const canvas=canvasRef.current;if(!canvas)return;
     const W=canvas.offsetWidth,H=canvas.offsetHeight;
     canvas.width=W;canvas.height=H;
     const cx=W/2,cy=H/2,maxR=Math.min(W,H)*0.44;
+
+    // Territoires d'influence : détection réelle des communautés à partir des
+    // connexions ENTRE contacts (jamais via Yann, qui fausserait tout en hub).
+    const contactEdges=buildContactEdges(contacts);
+    const ids=contacts.map(c=>String(c.id));
+    const labels=detectCommunities(ids,contactEdges);
+    const uniqueLabels=[...new Set(Object.values(labels))];
+    const colorMap={};
+    uniqueLabels.forEach((lab,i)=>{colorMap[lab]=COMMUNITY_COLORS[i%COMMUNITY_COLORS.length];});
+    const bridges=detectBridges(ids,contactEdges,labels);
+    communityRef.current={labels,bridges,colorOf:(id)=>colorMap[labels[id]]||C.gray,uniqueLabels,colorMap};
+
+    // Angle "maison" par communauté (camemberts égaux) — l'angle porte
+    // désormais une vraie information (à quel monde on appartient), pas une
+    // simple répartition arbitraire.
+    const homeAngle={};
+    uniqueLabels.forEach((lab,i)=>{homeAngle[lab]=(i/uniqueLabels.length)*Math.PI*2-Math.PI/2;});
+
     nodesRef.current=contacts.map((c,i)=>{
       const score=closenessScore(c);
       const targetRadius=ringRadiusFraction(score)*maxR;
-      const a=(i/Math.max(contacts.length,1))*Math.PI*2-Math.PI/2;
       const seed=idSeed(c.id,i);
-      const jx=(seededRand(seed*3)-0.5)*16;
-      const jy=(seededRand(seed*7+1)-0.5)*16;
-      return{id:c.id,contact:c,closeness:score,targetRadius,x:cx+targetRadius*Math.cos(a)+jx,y:cy+targetRadius*Math.sin(a)+jy,vx:0,vy:0,r:(c.utility_score??5)>=9?26:(c.utility_score??5)>=7?21:17};
+      const spread=(Math.PI*2/Math.max(uniqueLabels.length,1))*0.38;
+      const a=(homeAngle[labels[String(c.id)]]||0)+(seededRand(seed*3)-0.5)*spread;
+      const jx=(seededRand(seed*3)-0.5)*14;
+      const jy=(seededRand(seed*7+1)-0.5)*14;
+      return{id:c.id,contact:c,closeness:score,targetRadius,targetAngle:a,x:cx+targetRadius*Math.cos(a)+jx,y:cy+targetRadius*Math.sin(a)+jy,vx:0,vy:0,r:(c.utility_score??5)>=9?26:(c.utility_score??5)>=7?21:17};
     });
-    const idset=new Set(contacts.map(c=>String(c.id)));
-    const seen=new Set();
-    const edges=[];
-    contacts.forEach(c=>(c.connections||[]).forEach(cid=>{
-      const a=String(c.id),b=String(cid);
-      if(!idset.has(b))return;
-      const key=a<b?a+"|"+b:b+"|"+a;
-      if(seen.has(key))return;
-      seen.add(key);edges.push([a,b]);
-    }));
-    edgesRef.current=edges;
+    edgesRef.current=contactEdges;
     const getN=(id)=>nodesRef.current.find(n=>String(n.id)===String(id));
+
+    const sectorPath=(i)=>{
+      const n=uniqueLabels.length,a0=(i/n)*Math.PI*2-Math.PI/2,a1=((i+1)/n)*Math.PI*2-Math.PI/2;
+      const r=maxR*1.03;
+      return{x0:cx+Math.cos(a0)*r,y0:cy+Math.sin(a0)*r,x1:cx+Math.cos(a1)*r,y1:cy+Math.sin(a1)*r,a0,a1,r};
+    };
+
     let frame=0;
     const loop=()=>{
       const ctx=canvas.getContext("2d");ctx.clearRect(0,0,W,H);
@@ -730,12 +836,27 @@ function NetworkGraph({contacts,onSelect,highlightId}){
       ctx.translate(W/2+view.panX,H/2+view.panY);
       ctx.scale(view.scale,view.scale);
       ctx.translate(-W/2,-H/2);
+      // Échelle amortie façon Google Maps : tout grossit avec le zoom, mais
+      // beaucoup plus doucement que la carte elle-même — jamais figé, jamais démesuré.
+      const dampScale=1/Math.sqrt(view.scale);
+      const labelScale=Math.max(0.7,Math.min(2.2,Math.sqrt(view.scale)));
+      const lod=view.scale<1.15?0:view.scale<1.9?1:view.scale<2.8?2:3;
 
-      // Cercles-guides de proximité
+      // Territoires — secteurs translucides par communauté détectée
+      uniqueLabels.forEach((lab,i)=>{
+        const s=sectorPath(i);
+        ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(s.x0,s.y0);ctx.arc(cx,cy,s.r,s.a0,s.a1);ctx.closePath();
+        ctx.fillStyle=colorMap[lab];ctx.globalAlpha=0.045;ctx.fill();ctx.globalAlpha=1;
+      });
+
       RING_LABELS.forEach((ring)=>{
         const rr=ringRadiusFraction(ring.min+0.1)*maxR;
         ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);
-        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1/view.scale;ctx.setLineDash([3,4]);ctx.stroke();ctx.setLineDash([]);
+        ctx.strokeStyle="rgba(0,0,0,0.05)";ctx.lineWidth=1*dampScale;ctx.setLineDash([3*dampScale,5*dampScale]);ctx.stroke();ctx.setLineDash([]);
+        if(lod>=1){
+          ctx.fillStyle="rgba(0,0,0,0.35)";ctx.font=(8.5*dampScale)+"px "+MONO_FONT;
+          ctx.textAlign="center";ctx.fillText(ring.label.toUpperCase(),cx,cy-rr-6*dampScale);
+        }
       });
 
       if(frame<100){
@@ -750,11 +871,20 @@ function NetworkGraph({contacts,onSelect,highlightId}){
           const n=nodes[i];
           const dxc=n.x-cx,dyc=n.y-cy;
           const dist=Math.sqrt(dxc*dxc+dyc*dyc)||1;
+          const curAngle=Math.atan2(dyc,dxc);
           const radial=(n.targetRadius-dist)*0.08;
           n.vx+=(dxc/dist)*radial;
           n.vy+=(dyc/dist)*radial;
+          // Légère attraction angulaire vers l'angle-maison du territoire —
+          // garde chaque monde groupé sans le figer complètement.
+          let angDiff=n.targetAngle-curAngle;
+          while(angDiff>Math.PI)angDiff-=Math.PI*2;
+          while(angDiff<-Math.PI)angDiff+=Math.PI*2;
+          const tangentX=-Math.sin(curAngle),tangentY=Math.cos(curAngle);
+          const angForce=angDiff*0.6;
+          n.vx+=tangentX*angForce;n.vy+=tangentY*angForce;
         }
-        edges.forEach(([a,b])=>{
+        contactEdges.forEach(([a,b])=>{
           const na=getN(a),nb=getN(b);if(!na||!nb)return;
           const dx=nb.x-na.x,dy=nb.y-na.y,d=Math.sqrt(dx*dx+dy*dy)||1,f=(d-110)*0.008;
           na.vx+=f*dx/d;na.vy+=f*dy/d;nb.vx-=f*dx/d;nb.vy-=f*dy/d;
@@ -767,45 +897,66 @@ function NetworkGraph({contacts,onSelect,highlightId}){
         if(frame===99)nodes.forEach(n=>{n.vx=0;n.vy=0;});
         frame++;
       }
+
       edgesRef.current.forEach(([a,b])=>{
         const na=getN(a),nb=getN(b);if(!na||!nb)return;
-        const hi=String(hovRef.current)===a||String(hovRef.current)===b||String(highlightId||"")===a||String(highlightId||"")===b;
+        const onPath=isPathEdge(a,b);
+        const hi=onPath||String(hovRef.current)===a||String(hovRef.current)===b||String(highlightId||"")===a||String(highlightId||"")===b;
         ctx.beginPath();ctx.moveTo(na.x,na.y);ctx.lineTo(nb.x,nb.y);
-        ctx.strokeStyle=hi?"rgba(204,0,0,0.3)":"rgba(0,0,0,0.07)";
-        ctx.lineWidth=(hi?1.5:1)/view.scale;ctx.stroke();
+        ctx.strokeStyle=onPath?"#C9971C":(hi?"rgba(204,0,0,0.3)":"rgba(0,0,0,0.07)");
+        ctx.lineWidth=(onPath?3:(hi?1.5:1))*dampScale;ctx.stroke();
       });
+
       nodesRef.current.forEach(n=>{
         const hov=String(n.id)===String(hovRef.current);
         const isHL=String(n.id)===String(highlightId||"");
+        const onPath=pathSet.has(String(n.id));
+        const isBridge=communityRef.current.bridges.has(String(n.id));
+        const col=communityRef.current.colorOf(String(n.id));
         const score=healthScore(n.contact),hcol=healthColor(score);
-        const displayR=hov?n.r*1.35:n.r;
-        if(hov||isHL){ctx.beginPath();ctx.arc(n.x,n.y,displayR+8,0,Math.PI*2);ctx.fillStyle="rgba(204,0,0,0.08)";ctx.fill();}
+        const displayR=(hov?n.r*1.35:n.r)*labelScale;
+        if(hov||isHL||onPath){ctx.beginPath();ctx.arc(n.x,n.y,displayR+8*dampScale,0,Math.PI*2);ctx.fillStyle=onPath?"rgba(201,151,28,0.12)":"rgba(204,0,0,0.08)";ctx.fill();}
         ctx.beginPath();ctx.arc(n.x,n.y,displayR,0,Math.PI*2);
         const fillColor=hov?C.red:(isHL?C.redSoft:"#fff");
         ctx.fillStyle=fillColor;ctx.fill();
-        ctx.strokeStyle=(hov||isHL)?C.red:"rgba(0,0,0,0.1)";ctx.lineWidth=(hov||isHL)?2/view.scale:1/view.scale;ctx.stroke();
+        ctx.strokeStyle=onPath?"#C9971C":((hov||isHL)?C.red:(isBridge?col:"rgba(0,0,0,0.12)"));
+        ctx.lineWidth=(onPath?3:(isBridge?2.2:((hov||isHL)?2:1)))*dampScale;ctx.stroke();
         if(hov){
           const fullName=((n.contact.first_name||"")+" "+(n.contact.last_name||"")).trim();
           ctx.fillStyle="#fff";
-          ctx.font="bold "+Math.max(8,displayR*0.3)+"px Inter,sans-serif";
+          ctx.font="bold "+Math.max(8,displayR*0.3)+"px "+SANS_FONT;
           ctx.textAlign="center";ctx.textBaseline="middle";
           ctx.fillText(fullName,n.x,n.y);
         }else{
           ctx.fillStyle=C.black;
-          ctx.font="bold "+(n.r*0.55)+"px Inter,sans-serif";
+          ctx.font="bold "+(n.r*0.55*labelScale)+"px "+SANS_FONT;
           ctx.textAlign="center";ctx.textBaseline="middle";
           ctx.fillText(n.contact.initials||"?",n.x,n.y);
         }
-        ctx.beginPath();ctx.arc(n.x+displayR*0.65,n.y-displayR*0.65,4,0,Math.PI*2);ctx.fillStyle=hcol;ctx.fill();
+        // Zoom sémantique : le nom complet, puis le rôle, apparaissent en
+        // PERMANENCE à mesure qu'on zoome — pas seulement au survol.
+        if(!hov&&lod>=2){
+          const fullName=((n.contact.first_name||"")+" "+(n.contact.last_name||"")).trim();
+          ctx.fillStyle=C.black;ctx.font="600 "+(9.5*labelScale)+"px "+SANS_FONT;
+          ctx.textAlign="center";ctx.fillText(fullName,n.x,n.y+displayR+11*labelScale);
+        }
+        if(!hov&&lod>=3&&n.contact.role){
+          ctx.fillStyle=C.gray;ctx.font=(8*labelScale)+"px "+MONO_FONT;
+          ctx.textAlign="center";ctx.fillText(n.contact.role,n.x,n.y+displayR+11*labelScale+11*labelScale);
+        }
+        ctx.beginPath();ctx.arc(n.x+displayR*0.65,n.y-displayR*0.65,4*labelScale,0,Math.PI*2);ctx.fillStyle=hcol;ctx.fill();
+        if(isBridge){
+          ctx.beginPath();ctx.arc(n.x+displayR*0.7,n.y+displayR*0.7,4.5*labelScale,0,Math.PI*2);
+          ctx.fillStyle="#C9971C";ctx.fill();ctx.strokeStyle="#fff";ctx.lineWidth=1*dampScale;ctx.stroke();
+        }
       });
       ctx.restore();
       animRef.current=requestAnimationFrame(loop);
     };
     loop();
     return()=>cancelAnimationFrame(animRef.current);
-  },[contacts,highlightId]);
+  },[contacts,highlightId,pathIds]);
 
-  // Convertit des coordonnées écran en coordonnées "monde" (avant zoom/pan)
   const toWorld=(mx,my)=>{
     const canvas=canvasRef.current;
     const W=canvas.offsetWidth,H=canvas.offsetHeight;
@@ -872,11 +1023,43 @@ function NetworkGraph({contacts,onSelect,highlightId}){
     if(hit)onSelect(hit.contact);
   },[onSelect]);
 
+  const pathTargetContact=contacts.find(c=>String(c.id)===String(pathTargetId));
+  const pickerResults=contacts.filter(c=>pathSearch&&((c.first_name||"")+" "+(c.last_name||"")).toLowerCase().includes(pathSearch.toLowerCase())).slice(0,6);
+
   return(
     <div style={{position:"relative",width:"100%",height:"100%"}}>
       <canvas ref={canvasRef} onMouseMove={onMove} onMouseDown={onMouseDown} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
         onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onWheel={onWheel} onClick={onClick}
         style={{width:"100%",height:"100%",display:"block"}}/>
+
+      <div style={{position:"absolute",top:10,left:10,maxWidth:170}}>
+        {!showPathPicker&&!pathTargetContact&&(
+          <button onClick={()=>setShowPathPicker(true)} style={{padding:"6px 10px",borderRadius:8,background:"rgba(255,255,255,0.92)",backdropFilter:"blur(8px)",border:"1px solid "+C.grayLight,fontSize:10,fontWeight:600,color:C.gray,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>◈ Trouver un chemin...</button>
+        )}
+        {showPathPicker&&!pathTargetContact&&(
+          <div style={{background:"#fff",border:"1px solid "+C.grayLight,borderRadius:10,padding:8,boxShadow:"0 4px 14px rgba(0,0,0,0.1)"}}>
+            <input autoFocus value={pathSearch} onChange={e=>setPathSearch(e.target.value)} placeholder="Nom d'un contact ou d'une cible..."
+              style={{width:"100%",padding:"6px 8px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:6,fontSize:11,outline:"none",fontFamily:"Inter,sans-serif",marginBottom:pickerResults.length?6:0}}/>
+            {pickerResults.map(c=>(
+              <button key={c.id} onClick={()=>{setPathTargetId(String(c.id));setShowPathPicker(false);setPathSearch("");}}
+                style={{display:"block",width:"100%",textAlign:"left",padding:"5px 6px",background:"none",border:"none",cursor:"pointer",fontSize:11,color:C.black,fontFamily:"Inter,sans-serif"}}>
+                {c.first_name} {c.last_name}
+              </button>
+            ))}
+            <button onClick={()=>{setShowPathPicker(false);setPathSearch("");}} style={{fontSize:9,color:C.gray,background:"none",border:"none",cursor:"pointer",marginTop:4,fontFamily:"Inter,sans-serif"}}>Annuler</button>
+          </div>
+        )}
+        {pathTargetContact&&(
+          <div style={{background:C.black,borderRadius:10,padding:"8px 10px"}}>
+            <div style={{fontSize:8,letterSpacing:"0.08em",color:"rgba(255,255,255,0.5)",fontFamily:"monospace",marginBottom:3}}>CHEMIN LE PLUS COURT</div>
+            <div style={{fontSize:11,color:"#fff",lineHeight:1.5,fontFamily:"Inter,sans-serif"}}>
+              {pathIds&&pathIds.length?pathIds.map(id=>id==="moi"?"Toi":((contacts.find(c=>String(c.id)===id)||{}).first_name||"?")).join(" → "):"Aucun chemin trouvé"}
+            </div>
+            <button onClick={()=>setPathTargetId("")} style={{fontSize:9,color:"rgba(255,255,255,0.6)",background:"none",border:"none",cursor:"pointer",marginTop:5,fontFamily:"Inter,sans-serif"}}>× Effacer</button>
+          </div>
+        )}
+      </div>
+
       <div style={{position:"absolute",bottom:14,right:14,display:"flex",flexDirection:"column",gap:4,background:"rgba(255,255,255,0.92)",backdropFilter:"blur(8px)",border:"1px solid "+C.grayLight,borderRadius:10,padding:4,boxShadow:"0 2px 8px rgba(0,0,0,0.08)"}}>
         <button onClick={()=>applyZoom(1.2)} style={{width:28,height:28,border:"none",background:"none",borderRadius:6,fontSize:15,color:C.black,cursor:"pointer",fontWeight:700}}>+</button>
         <button onClick={resetView} style={{width:28,height:20,border:"none",background:"none",borderRadius:6,fontSize:9,color:C.gray,cursor:"pointer"}}>{Math.round(viewRef.current.scale*100)}%</button>
@@ -2820,7 +3003,10 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
             </div>
             <div style={{flex:1,position:"relative"}}>
               <span style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",color:C.gray,fontSize:13}}>⌕</span>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher..." style={{width:"100%",padding:"7px 10px 7px 26px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:8,fontSize:13,color:C.black,outline:"none",fontFamily:"Inter,sans-serif"}}/>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher..." style={{width:"100%",padding:"7px 26px 7px 26px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:8,fontSize:13,color:C.black,outline:"none",fontFamily:"Inter,sans-serif"}}/>
+              {search&&(
+                <button onClick={()=>setSearch("")} style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.gray,fontSize:14,lineHeight:1,padding:4,display:"flex",alignItems:"center",justifyContent:"center"}} aria-label="Effacer la recherche">×</button>
+              )}
             </div>
             <div style={{display:"flex",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:8,padding:2,gap:1,flexShrink:0}}>
               {[["graph","⬡"],["list","≡"]].map(([v,l])=>(
