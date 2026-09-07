@@ -4,6 +4,11 @@
   ],
   "functions": {
     "api/whatsapp.js": { "maxDuration": 60 },
-    "api/chat.js": { "maxDuration": 60 }
-  }
+    "api/chat.js": { "maxDuration": 60 },
+    "api/research-now.js": { "maxDuration": 60 },
+    "api/cron/weekly-research.js": { "maxDuration": 60 }
+  },
+  "crons": [
+    { "path": "/api/cron/weekly-research", "schedule": "0 6 * * *" }
+  ]
 }
