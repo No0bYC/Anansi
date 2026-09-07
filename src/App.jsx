@@ -102,6 +102,7 @@ function ringRadiusFraction(score){
 const RING_LABELS=[{max:100,min:75,label:"Proche"},{max:75,min:50,label:"Régulier"},{max:50,min:25,label:"Élargi"},{max:25,min:0,label:"Périphérie"}];
 const SANS_FONT="Inter,sans-serif";
 const MONO_FONT="'JetBrains Mono',monospace";
+const MONITORING_CRITERIA_OPTIONS=["Business","Politique","Social","Influence","Art","Sport"];
 
 // ── DÉTECTION DE COMMUNAUTÉS (territoires d'influence réels) ───────────────
 // Propagation d'étiquettes (Label Propagation Algorithm) sur les connexions
@@ -1396,6 +1397,55 @@ function WhatsAppAnalysisModal({contact,onClose,onApply}){
   );
 }
 
+// ── PANNEAU "EN VEILLE" — glissière sur le bord droit ──────────────────────
+function MonitoringPanel({contacts,onSelect}){
+  const [open,setOpen]=useState(false);
+  const monitored=contacts.filter(c=>c.monitoring_enabled);
+  const DAY_NAMES=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+  const statusFor=(c)=>{
+    if(!c.last_research_at)return{text:"Jamais scanné",color:C.gray};
+    const today=new Date().toISOString().split("T")[0];
+    if(c.last_research_at===today)return{text:"Aujourd'hui",color:C.green};
+    const diffDays=Math.round((new Date(today)-new Date(c.last_research_at))/86400000);
+    return{text:"Il y a "+diffDays+" jour"+(diffDays>1?"s":""),color:diffDays>10?C.amber:C.gray};
+  };
+  return(
+    <>
+      <button onClick={()=>setOpen(p=>!p)} style={{position:"fixed",right:open?300:0,top:"50%",transform:"translateY(-50%)",zIndex:90,background:C.black,color:"#fff",border:"none",borderRadius:"8px 0 0 8px",padding:"14px 7px",cursor:"pointer",writingMode:"vertical-rl",textOrientation:"mixed",fontSize:10,fontWeight:700,letterSpacing:"0.06em",fontFamily:"Inter,sans-serif",transition:"right 0.2s",boxShadow:"-2px 0 8px rgba(0,0,0,0.15)"}}>
+        {open?"FERMER":"EN VEILLE"}
+        {monitored.length>0&&!open&&(
+          <span style={{marginTop:6,width:16,height:16,borderRadius:"50%",background:C.red,color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",writingMode:"horizontal-tb"}}>{monitored.length}</span>
+        )}
+      </button>
+      {open&&(
+        <div style={{position:"fixed",right:0,top:0,bottom:0,width:300,background:"#fff",borderLeft:"1px solid "+C.grayLight,zIndex:89,display:"flex",flexDirection:"column",boxShadow:"-4px 0 20px rgba(0,0,0,0.1)"}}>
+          <div style={{padding:"16px 16px 12px",borderBottom:"1px solid "+C.grayLight,flexShrink:0}}>
+            <div style={{fontSize:14,fontWeight:800,color:C.black}}>En veille</div>
+            <div style={{fontSize:11,color:C.gray,marginTop:2}}>{monitored.length} contact{monitored.length>1?"s":""} sous surveillance</div>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:12}}>
+            {monitored.length===0&&<div style={{fontSize:11,color:C.gray,textAlign:"center",padding:"30px 10px"}}>Aucun contact sous veille pour l'instant. Active-la depuis l'onglet "Veille" d'une fiche contact.</div>}
+            {monitored.map(c=>{
+              const status=statusFor(c);
+              return(
+                <button key={c.id} onClick={()=>{onSelect(c);setOpen(false);}} style={{display:"flex",alignItems:"center",gap:9,width:"100%",padding:"9px 8px",borderRadius:8,background:"none",border:"none",cursor:"pointer",textAlign:"left",marginBottom:2,fontFamily:"Inter,sans-serif"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="#F7F7F7"} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  <div style={{width:30,height:30,borderRadius:"50%",background:C.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>{c.initials||"?"}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:600,color:C.black,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.first_name} {c.last_name}</div>
+                    <div style={{fontSize:10,color:status.color}}>{status.text}{c.monitoring_day!=null?" · "+DAY_NAMES[c.monitoring_day]:""}</div>
+                  </div>
+                  <span style={{fontSize:11,color:C.gray}}>→</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── FICHE CONTACT ──────────────────────────────────────────────────────────────
 function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,customRelationTypes,onCreateCustomRelationType,groupMeta,onUpsertGroupMeta,onBulkSyncGroup}){
   const [tab,setTab]=useState("brief");
@@ -1404,6 +1454,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,custo
   const [showEditModal,setShowEditModal]=useState(false);
   const [openRelEditor,setOpenRelEditor]=useState(null);
   const [showWhatsAppAnalysis,setShowWhatsAppAnalysis]=useState(false);
+  const [researchLoading,setResearchLoading]=useState(false);
   const photoRef=useRef(null);
   const score=healthScore(c),hcol=healthColor(score);
   const connSet=connectedIdsOf(c,contacts);
@@ -1459,7 +1510,7 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,custo
           <span style={{fontSize:10,color:hcol,fontWeight:700}}>Santé {score}</span>
         </div>
         <div style={{display:"flex",margin:"0 -16px",overflowX:"auto"}}>
-          {["brief","psyché","relation","réseau","historique","média"].map(t=>{
+          {["brief","psyché","relation","réseau",...(c.monitoring_enabled?["veille"]:[]),"historique","média"].map(t=>{
             const active=tab===t;
             return(<button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"8px 2px",background:"none",border:"none",borderBottom:"2px solid "+(active?C.red:"transparent"),color:active?C.red:C.gray,fontSize:10,fontWeight:active?600:400,cursor:"pointer",textTransform:"capitalize",fontFamily:"Inter,sans-serif",whiteSpace:"nowrap",minWidth:48}}>{t}</button>);
           })}
@@ -1475,6 +1526,16 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,custo
               <div><div style={{fontSize:12,fontWeight:700,color:C.red,textTransform:"capitalize"}}>{c.primary_lever||"–"}</div><div style={{fontSize:10,color:C.gray,marginTop:1}}>{mainLever.desc}</div></div>
             </div>
           </div>
+          {!c.monitoring_enabled?(
+            <button onClick={()=>{onUpdate({monitoring_enabled:true});setTab("veille");}} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"10px",background:"#fff",border:"1px dashed "+C.grayLight,borderRadius:10,color:C.gray,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>
+              🔎 Activer la veille continue sur ce contact
+            </button>
+          ):(
+            <button onClick={()=>setTab("veille")} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",background:"#F7F7F7",border:"1px solid "+C.grayLight,borderRadius:10,color:C.black,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"Inter,sans-serif"}}>
+              <span>🔎 Veille active {c.last_research_at?"— dernière veille "+c.last_research_at:"— pas encore scannée"}</span>
+              <span style={{color:C.red}}>Voir →</span>
+            </button>
+          )}
           {(c.discussion_points||[]).length>0&&(
             <div style={{background:"#F7F7F7",borderRadius:10,padding:"10px 12px"}}>
               <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,fontWeight:600}}>Points de discussion</div>
@@ -1633,6 +1694,101 @@ function ContactCardContent({contact:c,contacts,onSelect,onUpdate,onDelete,custo
               </div>);
             })}
           </div>)}
+        </div>)}
+
+        {tab==="veille"&&(<div style={{display:"flex",flexDirection:"column",gap:10}}>
+          <div style={{background:"#F7F7F7",borderRadius:10,padding:"10px 12px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:c.monitoring_enabled?8:0}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.black}}>Veille continue</div>
+              <button onClick={()=>onUpdate({monitoring_enabled:!c.monitoring_enabled})} style={{width:38,height:22,borderRadius:11,background:c.monitoring_enabled?C.red:C.grayLight,border:"none",cursor:"pointer",position:"relative",flexShrink:0}}>
+                <div style={{width:18,height:18,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:c.monitoring_enabled?18:2,transition:"left 0.15s"}}/>
+              </button>
+            </div>
+            {c.monitoring_enabled&&(
+              <>
+                <div style={{fontSize:9,color:C.gray,marginBottom:6}}>Critères suivis :</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
+                  {MONITORING_CRITERIA_OPTIONS.map(crit=>{
+                    const active=(c.monitoring_criteria||[]).includes(crit);
+                    return(<button key={crit} onClick={()=>{
+                      const cur=c.monitoring_criteria||[];
+                      onUpdate({monitoring_criteria:active?cur.filter(x=>x!==crit):[...cur,crit]});
+                    }} style={{padding:"4px 9px",borderRadius:20,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#fff",color:active?"#fff":C.gray,border:"1px solid "+(active?C.red:C.grayLight)}}>{crit}</button>);
+                  })}
+                </div>
+                <div style={{fontSize:9,color:C.gray,marginBottom:6}}>Jour de veille automatique :</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
+                  {["Dim","Lun","Mar","Mer","Jeu","Ven","Sam"].map((label,dow)=>{
+                    const active=(c.monitoring_day??1)===dow;
+                    return(<button key={dow} onClick={()=>onUpdate({monitoring_day:dow})} style={{width:34,padding:"5px 0",borderRadius:8,fontSize:10,cursor:"pointer",fontFamily:"Inter,sans-serif",background:active?C.red:"#fff",color:active?"#fff":C.gray,border:"1px solid "+(active?C.red:C.grayLight),fontWeight:active?700:400}}>{label}</button>);
+                  })}
+                </div>
+                <div style={{fontSize:9,color:C.gray,fontStyle:"italic"}}>{c.last_research_at?"Dernière veille : "+c.last_research_at:"Pas encore de veille effectuée."}</div>
+              </>
+            )}
+          </div>
+
+          {c.monitoring_enabled&&(
+            <button onClick={async()=>{
+              setResearchLoading(true);
+              try{
+                const res=await fetch("/api/research-now",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contactId:c.id})});
+                const data=await res.json();
+                if(!res.ok)throw new Error(data.error||"Erreur inconnue");
+                onUpdate({research_reports:data.contact.research_reports,last_research_at:data.contact.last_research_at});
+              }catch(e){alert("Erreur lors de la veille : "+e.message);}
+              setResearchLoading(false);
+            }} disabled={researchLoading} style={{padding:"9px",background:researchLoading?C.grayLight:C.red,border:"none",borderRadius:10,color:"#fff",fontSize:12,fontWeight:700,cursor:researchLoading?"default":"pointer",fontFamily:"Inter,sans-serif"}}>
+              {researchLoading?"Recherche en cours...":"🔎 Lancer une veille maintenant"}
+            </button>
+          )}
+
+          {(c.research_reports||[]).length>0?(
+            <div>
+              <div style={{fontSize:9,color:C.gray,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8,fontWeight:600}}>Rapports ({c.research_reports.length})</div>
+              {c.research_reports.map((report,i)=>(
+                <div key={i} style={{background:"#fff",border:"1px solid "+C.grayLight,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <span style={{fontSize:10,fontWeight:700,color:C.black}}>{report.date}</span>
+                    <div style={{display:"flex",gap:3}}>{(report.criteria||[]).map(cr=><span key={cr} style={{fontSize:8,padding:"1px 6px",borderRadius:8,background:C.redSoft,color:C.red,fontWeight:600}}>{cr}</span>)}</div>
+                  </div>
+                  <div style={{fontSize:12,color:C.black,lineHeight:1.5,marginBottom:6}}>{report.summary}</div>
+                  {(report.key_points||[]).length>0&&(
+                    <ul style={{margin:0,paddingLeft:16,marginBottom:6}}>
+                      {report.key_points.map((pt,j)=><li key={j} style={{fontSize:11,color:"#333",marginBottom:2}}>{pt}</li>)}
+                    </ul>
+                  )}
+                  {(report.sources||[]).length>0&&(
+                    <div style={{marginBottom:(report.suggested_contacts||[]).length?6:0}}>
+                      {report.sources.map((s,j)=>s.url?(
+                        <a key={j} href={s.url} target="_blank" rel="noopener noreferrer" style={{display:"block",fontSize:10,color:C.blue,marginBottom:2,textDecoration:"none"}}>🔗 {s.text}</a>
+                      ):(
+                        <div key={j} style={{fontSize:10,color:C.gray}}>{s.text}</div>
+                      ))}
+                    </div>
+                  )}
+                  {(report.suggested_contacts||[]).length>0&&(
+                    <div style={{background:"#F7F7F7",borderRadius:8,padding:"7px 9px"}}>
+                      <div style={{fontSize:9,color:C.gray,fontWeight:600,marginBottom:4}}>Contacts mentionnés dans l'actualité :</div>
+                      {report.suggested_contacts.map((sc,j)=>{
+                        const matched=sc.matched_contact_id?contacts.find(x=>String(x.id)===String(sc.matched_contact_id)):null;
+                        return(
+                          <div key={j} style={{fontSize:10,color:C.black,marginBottom:3}}>
+                            <b>{sc.name}</b>{matched?" (déjà dans ta base)":""} — <span style={{color:C.gray}}>{sc.reason}</span>
+                            {matched&&<button onClick={()=>onSelect(matched)} style={{marginLeft:6,fontSize:9,color:C.red,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Voir →</button>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ):c.monitoring_enabled?(
+            <div style={{fontSize:11,color:C.gray,textAlign:"center",padding:"20px 0"}}>Aucun rapport pour l'instant. Le premier scan aura lieu au prochain jour choisi, ou lance une veille manuelle ci-dessus.</div>
+          ):(
+            <div style={{fontSize:11,color:C.gray,textAlign:"center",padding:"20px 0"}}>Active la veille pour qu'Anansi surveille l'actualité de ce contact chaque semaine.</div>
+          )}
         </div>)}
 
         {tab==="historique"&&(<div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -2349,7 +2505,7 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups,existin
                 <RelationTypePicker selected={form.my_relation} onChange={(next)=>set("my_relation",next)} customTypes={customRelationTypes} onCreateCustomType={onCreateCustomRelationType} color={C.red}/>
               </div>
               {field("Poste","role","text","CEO")}
-              <AutocompleteField label="Entreprise" value={form.company} onChange={v=>set("company",v)} suggestions={(existingCompanies||[]).filter(c=>c!==contact.company)} placeholder="Nexus Capital" inp={inp} lbl={lbl}/>
+              <AutocompleteField label="Entreprise" value={form.company} onChange={v=>set("company",v)} suggestions={(existingCompanies||[])} placeholder="Nexus Capital" inp={inp} lbl={lbl}/>
               <div style={{marginBottom:12}}>
                 <label style={lbl}>Secteurs (multi)</label>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
@@ -2369,10 +2525,10 @@ function AddContactModal({onClose,onSave,existingContacts,existingGroups,existin
                 )}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <AutocompleteField label="Pays" value={form.country} onChange={v=>set("country",v)} suggestions={(existingCountries||[]).filter(x=>x!==c.country)} placeholder="Maurice" inp={inp} lbl={lbl}/>
-                <AutocompleteField label="Région" value={form.region} onChange={v=>set("region",v)} suggestions={(existingRegions||[]).filter(x=>x!==c.region)} placeholder="Plaines Wilhems" inp={inp} lbl={lbl}/>
+                <AutocompleteField label="Pays" value={form.country} onChange={v=>set("country",v)} suggestions={(existingCountries||[])} placeholder="Maurice" inp={inp} lbl={lbl}/>
+                <AutocompleteField label="Région" value={form.region} onChange={v=>set("region",v)} suggestions={(existingRegions||[])} placeholder="Plaines Wilhems" inp={inp} lbl={lbl}/>
               </div>
-              <AutocompleteField label="Ville" value={form.location_city} onChange={v=>set("location_city",v)} suggestions={(existingCities||[]).filter(x=>x!==c.location_city)} placeholder="Grand Baie" inp={inp} lbl={lbl}/>
+              <AutocompleteField label="Ville" value={form.location_city} onChange={v=>set("location_city",v)} suggestions={(existingCities||[])} placeholder="Grand Baie" inp={inp} lbl={lbl}/>
               <div style={{marginBottom:12}}>
                 <label style={lbl}>Groupes / Associations (multi)</label>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
@@ -3183,6 +3339,7 @@ function Dashboard({contacts,onSelect,selected,onDeselect,onSaveContact,onBulkIm
       {showAddContact&&<AddContactModal onClose={()=>setShowAddContact(false)} onSave={onSaveContact} existingContacts={contacts} existingGroups={allGroupsInData} existingCompanies={allCompaniesInData} existingCountries={allCountriesInData} existingRegions={allRegionsInData} existingCities={allCitiesInData} existingTags={allTagsInData} customRelationTypes={customRelationTypes} onCreateCustomRelationType={onCreateCustomRelationType} groupMeta={groupMeta} onUpsertGroupMeta={onUpsertGroupMeta}/>}
       {!showAddContact&&!showImport&&!selected&&<HexFAB onClick={()=>setShowAddContact(true)}/>}
       <ChatWidget/>
+      <MonitoringPanel contacts={contacts} onSelect={onSelect}/>
     </div>
   );
 }
@@ -3209,6 +3366,11 @@ function normalizeContact(row){
     connection_types:row.connection_types||{},
     web_insights:row.web_insights||[],
     psychological_profile:row.psychological_profile||null,
+    monitoring_enabled:row.monitoring_enabled||false,
+    monitoring_criteria:row.monitoring_criteria||[],
+    monitoring_day:row.monitoring_day??null,
+    research_reports:row.research_reports||[],
+    last_research_at:row.last_research_at||null,
     last_interaction:row.last_interaction||"–",
     genre:row.genre||"M",
     alias:row.alias||"",
