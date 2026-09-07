@@ -2,7 +2,7 @@
 // ANANSI I:R. — Veille déclenchée manuellement depuis la fiche contact
 // ═══════════════════════════════════════════════════════════════════════════
 const { createClient } = require("@supabase/supabase-js");
-const { runMonitoringResearch } = require("../lib/botCore");
+const { runMonitoringResearch, fetchAllContacts } = require("../lib/botCore");
 
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
@@ -20,9 +20,7 @@ module.exports = async (req, res) => {
       return;
     }
     const supabase = getSupabase();
-    const { data: contacts, error } = await supabase.from("contacts").select("*");
-    if (error) throw error;
-
+    const contacts = await fetchAllContacts(supabase);
     const contact = contacts.find((c) => String(c.id) === String(contactId));
     if (!contact) {
       res.status(404).json({ error: "Contact introuvable" });
