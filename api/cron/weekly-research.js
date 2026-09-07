@@ -5,7 +5,7 @@
 // c'est ce qui permet d'étaler la charge sur la semaine.
 // ═══════════════════════════════════════════════════════════════════════════
 const { createClient } = require("@supabase/supabase-js");
-const { runMonitoringResearch } = require("../../lib/botCore");
+const { runMonitoringResearch, fetchAllContacts } = require("../../lib/botCore");
 
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
@@ -24,9 +24,7 @@ module.exports = async (req, res) => {
   const results = { scanned: 0, updated: 0, errors: [], today: new Date().getDay() };
 
   try {
-    const { data: contacts, error } = await supabase.from("contacts").select("*");
-    if (error) throw error;
-
+    const contacts = await fetchAllContacts(supabase);
     const todayDow = new Date().getDay(); // 0=dimanche ... 6=samedi, cohérent avec monitoring_day
     // Repli : un contact en veille sans jour choisi (ancienne donnée, ou pas
     // encore configuré) est traité le lundi par défaut, pour ne rien perdre.
